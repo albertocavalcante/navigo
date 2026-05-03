@@ -1,0 +1,33 @@
+version = "2"
+
+[run]
+timeout = "5m"
+tests = true
+modules-download-mode = "readonly"
+
+[linters]
+default = "none"
+enable = [
+  "errcheck",
+  "govet",
+  "ineffassign",
+  "misspell",
+  "staticcheck",
+  "unused",
+]
+
+[linters.settings.govet]
+enable-all = true
+disable = ["fieldalignment"]
+
+[linters.settings.misspell]
+locale = "US"
+
+[formatters]
+enable = ["gofmt", "goimports"]
+
+[formatters.settings.goimports]
+local-prefixes = ["github.com/albertocavalcante/navigo"]
+
+[linters.exclusions]
+generated = "lax"

@@ -284,9 +284,6 @@ navigo/
 │   ├── session.go              # CDP session (per-target command/event dispatch)
 │   ├── transport.go            # Transport interface (WebSocket, pipe)
 │   └── proto/                  # Auto-generated CDP domain types + commands
-│       ├── generate/           # Code generator from browser_protocol.json
-│       │   ├── main.go         # Generator entry point
-│       │   └── template.go     # Go code templates
 │       ├── target/             # Target domain (attachToTarget, etc.)
 │       ├── page/               # Page domain (navigate, screenshot, PDF)
 │       ├── dom/                # DOM domain (querySelector, attributes)
@@ -400,7 +397,7 @@ cmd/navigo-mcp
                  └── internal/ws/
 ```
 
-All packages are internal to the module. The only public API surface is:
+Most packages exist to support the module internally. The intended public API surface is:
 - `navigo` — the high-level library (Browser, Page, Element, etc.)
 - `navigo/ax` — accessibility tree / agent layer
 - `navigo/cdp` — low-level CDP client (for advanced users)
@@ -421,6 +418,11 @@ We use **remote object IDs** (`Runtime.RemoteObjectId`) — opaque strings that 
 - Stable within an execution context
 - Work across frames (each frame has its own execution context)
 - The same architecture used by Rod and Puppeteer
+
+They are **not** durable across navigation, execution-context destruction, page close, or explicit object release. Public APIs must therefore define stale-handle behavior:
+- Selector-created elements should retain enough metadata to re-resolve when appropriate
+- AX ref interactions should re-resolve through `backendDOMNodeId` or fresh queries
+- Operations on invalid handles should return a typed `StaleElementError`
 
 ```go
 type Element struct {
@@ -943,13 +945,13 @@ CDP WebSocket usage is simple: text frames only, no compression, no fragmentatio
 | [`coder/websocket`][coder-ws] | Best API, zero deps, but adds an external dependency |
 | [`gobwas/ws`][gobwas-ws] | Used by chromedp; zero-alloc but two transitive deps |
 
-**Transport is pluggable** (same pattern as Rod). Advanced users can inject their preferred WebSocket library:
+**Transport is pluggable** (same pattern as Rod). It should be cancellation-aware so higher layers can enforce timeouts and shutdown cleanly. Advanced users can inject their preferred WebSocket library:
 
 ```go
 // Transport interface — implement for custom WebSocket
 type Transport interface {
-    Send(data []byte) error
-    Read() ([]byte, error)
+    Send(ctx context.Context, data []byte) error
+    Read(ctx context.Context) ([]byte, error)
     Close() error
 }
 
@@ -995,7 +997,7 @@ Our read buffer grows dynamically per frame (allocate from frame header's declar
 
 - [ ] `browser.go` — Launch/Connect, NewContext, Close
 - [ ] `context.go` — browser context via `Target.createBrowserContext`, cookie isolation
-- [ ] `page.go` — NewPage via `Target.createTarget`, Navigate (+ wait for `Page.loadEventFired`), URL, Title, Content, Close
+- [ ] `page.go` — NewPage via `Target.createTarget`, Navigate (+ frame/loader tracking and explicit wait-until semantics, not just `Page.loadEventFired`), URL, Title, Content, Close
 - [ ] `element.go` — Element backed by RemoteObjectId, Query/QueryAll via `Runtime.evaluate` + `document.querySelector`
 - [ ] `wait.go` — auto-wait: poll visibility/stability/enabled with exponential backoff
 - [ ] `selector.go` — CSS selectors, XPath (via `document.evaluate`), text selectors (walk tree)

@@ -1,3 +1,16 @@
+pre-commit:
+  parallel: true
+  commands:
+    go-fmt:
+      glob: "*.go"
+      run: test -z "$(gofmt -l .)" || (gofmt -d . && exit 1)
+    go-vet:
+      glob: "*.go"
+      run: go vet ./...
+    golangci-lint:
+      glob: "*.go"
+      run: go tool -modfile=tools.go.mod golangci-lint run
+
 commit-msg:
   commands:
     semantic-commit:
@@ -12,3 +25,8 @@ commit-msg:
           echo "Got: $msg"
           exit 1
         fi
+
+output:
+  - meta
+  - summary
+  - success
