@@ -45,7 +45,8 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 	expectMethodAndReply(t, transport, 1, cdptarget.CommandCreateTarget, `{"targetId":"target-1"}`)
 	expectMethodAndReply(t, transport, 2, cdptarget.CommandAttachToTarget, `{"sessionId":"session-1"}`)
 	expectMethodAndReplyWithSession(t, transport, 3, "session-1", cdppage.CommandEnable, `{}`)
-	expectMethodAndReplyWithSession(t, transport, 4, "session-1", cdppage.CommandSetLifecycleEventsEnabled, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 4, "session-1", cdpruntime.CommandEnable, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 5, "session-1", cdppage.CommandSetLifecycleEventsEnabled, `{}`)
 
 	var page *Page
 	select {
@@ -70,8 +71,9 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		navResultCh <- result
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 5, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1","loaderId":"loader-1"}`)
+	expectMethodAndReplyWithSession(t, transport, 6, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1","loaderId":"loader-1"}`)
 	transport.reads <- []byte(`{"method":"Page.frameNavigated","sessionId":"session-1","params":{"frame":{"id":"frame-1","loaderId":"loader-1","url":"https://example.com"}}}`)
+	transport.reads <- []byte(`{"method":"Runtime.executionContextCreated","sessionId":"session-1","params":{"context":{"id":7,"origin":"https://example.com","name":"","uniqueId":"ctx-1","auxData":{"frameId":"frame-1","isDefault":true}}}}`)
 
 	select {
 	case err := <-errCh:
@@ -124,7 +126,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		evalValueCh <- value
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 6, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"number","value":2}}`)
+	expectMethodAndReplyWithSession(t, transport, 7, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"number","value":2}}`)
 
 	select {
 	case err := <-errCh:
@@ -151,7 +153,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		evalSpecialCh <- value
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 7, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"number","unserializableValue":"NaN"}}`)
+	expectMethodAndReplyWithSession(t, transport, 8, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"number","unserializableValue":"NaN"}}`)
 
 	select {
 	case err := <-errCh:
@@ -168,6 +170,56 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		t.Fatal("timed out waiting for page.Evaluate(NaN)")
 	}
 
+	callValueCh := make(chan any, 1)
+	go func() {
+		value, err := page.CallFunction(context.Background(), "function(a, b) { return a + b; }", 2, 3)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		callValueCh <- value
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 9, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"number","value":5}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("page.CallFunction() error = %v", err)
+	case value := <-callValueCh:
+		number, ok := value.(float64)
+		if !ok {
+			t.Fatalf("value type = %T, want float64", value)
+		}
+		if got, want := number, 5.0; got != want {
+			t.Fatalf("value = %v, want %v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for page.CallFunction()")
+	}
+
+	frameTreeCh := make(chan *cdppage.FrameTree, 1)
+	go func() {
+		tree, err := page.GetFrameTree(context.Background())
+		if err != nil {
+			errCh <- err
+			return
+		}
+		frameTreeCh <- tree
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 10, "session-1", cdppage.CommandGetFrameTree, `{"frameTree":{"frame":{"id":"frame-1","loaderId":"loader-1","url":"https://example.com","domainAndRegistry":"example.com","securityOrigin":"https://example.com","mimeType":"text/html","secureContextType":"Secure","crossOriginIsolatedContextType":"NotIsolated","gatedAPIFeatures":[]}}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("page.GetFrameTree() error = %v", err)
+	case tree := <-frameTreeCh:
+		if got, want := string(tree.Frame.ID), "frame-1"; got != want {
+			t.Fatalf("tree.Frame.ID = %q, want %q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for page.GetFrameTree()")
+	}
+
 	sameDocResultCh := make(chan *cdppage.NavigateResult, 1)
 	go func() {
 		result, err := page.Navigate(context.Background(), "https://example.com/#hash")
@@ -178,7 +230,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		sameDocResultCh <- result
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 8, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
+	expectMethodAndReplyWithSession(t, transport, 11, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
 
 	select {
 	case err := <-errCh:
@@ -238,7 +290,8 @@ func TestPageGotoWaitsAtomically(t *testing.T) {
 	expectMethodAndReply(t, transport, 1, cdptarget.CommandCreateTarget, `{"targetId":"target-1"}`)
 	expectMethodAndReply(t, transport, 2, cdptarget.CommandAttachToTarget, `{"sessionId":"session-1"}`)
 	expectMethodAndReplyWithSession(t, transport, 3, "session-1", cdppage.CommandEnable, `{}`)
-	expectMethodAndReplyWithSession(t, transport, 4, "session-1", cdppage.CommandSetLifecycleEventsEnabled, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 4, "session-1", cdpruntime.CommandEnable, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 5, "session-1", cdppage.CommandSetLifecycleEventsEnabled, `{}`)
 
 	var page *Page
 	select {
@@ -259,7 +312,7 @@ func TestPageGotoWaitsAtomically(t *testing.T) {
 		gotoResultCh <- result
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 5, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1","loaderId":"loader-1"}`)
+	expectMethodAndReplyWithSession(t, transport, 6, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1","loaderId":"loader-1"}`)
 	transport.reads <- []byte(`{"method":"Page.frameNavigated","sessionId":"session-1","params":{"frame":{"id":"frame-1","loaderId":"loader-1","url":"https://example.com"}}}`)
 	transport.reads <- []byte(`{"method":"Page.lifecycleEvent","sessionId":"session-1","params":{"frameId":"frame-1","loaderId":"loader-1","name":"load","timestamp":123.45}}`)
 
@@ -284,7 +337,7 @@ func TestPageGotoWaitsAtomically(t *testing.T) {
 		sameDocResultCh <- result
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 6, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
+	expectMethodAndReplyWithSession(t, transport, 7, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
 	transport.reads <- []byte(`{"method":"Page.navigatedWithinDocument","sessionId":"session-1","params":{"frameId":"frame-1","url":"https://example.com/#hash"}}`)
 
 	select {

@@ -21,15 +21,17 @@ type Page struct {
 	sessionID cdptarget.SessionID
 	session   *cdp.Session
 
-	mu                sync.Mutex
-	eventSeq          uint64
-	lastNavigation    navigationRecord
-	lifecycleByLoader map[string]map[cdppage.LifecycleEventName]uint64
-	lifecycleByFrame  map[string]map[cdppage.LifecycleEventName]uint64
-	frameStates       map[string]*frameState
-	mainFrameID       string
-	waiters           map[int]*navigationWaiter
-	nextWaiterID      int
+	mu                    sync.Mutex
+	eventSeq              uint64
+	lastNavigation        navigationRecord
+	lifecycleByLoader     map[string]map[cdppage.LifecycleEventName]uint64
+	lifecycleByFrame      map[string]map[cdppage.LifecycleEventName]uint64
+	frameStates           map[string]*frameState
+	contextsByID          map[cdpruntime.ExecutionContextID]executionContextState
+	defaultContextByFrame map[string]cdpruntime.ExecutionContextID
+	mainFrameID           string
+	waiters               map[int]*navigationWaiter
+	nextWaiterID          int
 }
 
 type WaitUntil string
@@ -78,6 +80,11 @@ type frameState struct {
 	stoppedLoadingSeq uint64
 }
 
+type executionContextState struct {
+	frameID      string
+	defaultWorld bool
+}
+
 func (b *Browser) NewPage(ctx context.Context) (*Page, error) {
 	root := b.conn.RootSession()
 
@@ -92,26 +99,32 @@ func (b *Browser) NewPage(ctx context.Context) (*Page, error) {
 	}
 
 	session := b.conn.Session(string(attachResult.SessionID))
+	page := &Page{
+		browser:               b,
+		targetID:              targetResult.TargetID,
+		sessionID:             attachResult.SessionID,
+		session:               session,
+		waiters:               make(map[int]*navigationWaiter),
+		lifecycleByLoader:     make(map[string]map[cdppage.LifecycleEventName]uint64),
+		lifecycleByFrame:      make(map[string]map[cdppage.LifecycleEventName]uint64),
+		frameStates:           make(map[string]*frameState),
+		contextsByID:          make(map[cdpruntime.ExecutionContextID]executionContextState),
+		defaultContextByFrame: make(map[string]cdpruntime.ExecutionContextID),
+	}
+
+	page.startEventLoop()
+
 	if err := cdppage.Enable().Do(ctx, session); err != nil {
 		return nil, fmt.Errorf("enable page domain: %w", err)
+	}
+
+	if err := cdpruntime.Enable().Do(ctx, session); err != nil {
+		return nil, fmt.Errorf("enable runtime domain: %w", err)
 	}
 
 	if err := cdppage.SetLifecycleEventsEnabled(true).Do(ctx, session); err != nil {
 		return nil, fmt.Errorf("enable page lifecycle events: %w", err)
 	}
-
-	page := &Page{
-		browser:           b,
-		targetID:          targetResult.TargetID,
-		sessionID:         attachResult.SessionID,
-		session:           session,
-		waiters:           make(map[int]*navigationWaiter),
-		lifecycleByLoader: make(map[string]map[cdppage.LifecycleEventName]uint64),
-		lifecycleByFrame:  make(map[string]map[cdppage.LifecycleEventName]uint64),
-		frameStates:       make(map[string]*frameState),
-	}
-
-	page.startEventLoop()
 
 	return page, nil
 }
@@ -188,6 +201,51 @@ func (p *Page) Evaluate(ctx context.Context, expression string) (any, error) {
 	return decodeRemoteValue(result.Result)
 }
 
+func (p *Page) CallFunction(ctx context.Context, functionDeclaration string, args ...any) (any, error) {
+	executionContextID, err := p.mainWorldExecutionContextID()
+	if err != nil {
+		return nil, err
+	}
+
+	callArguments := make([]cdpruntime.CallArgument, 0, len(args))
+	for _, arg := range args {
+		callArgument, callErr := encodeCallArgument(arg)
+		if callErr != nil {
+			return nil, callErr
+		}
+		callArguments = append(callArguments, callArgument)
+	}
+
+	result, err := cdpruntime.CallFunctionOn(functionDeclaration).
+		WithExecutionContextID(executionContextID).
+		WithArguments(callArguments).
+		WithReturnByValue(true).
+		WithAwaitPromise(true).
+		Do(ctx, p.session)
+	if err != nil {
+		return nil, fmt.Errorf("call page function: %w", err)
+	}
+
+	if result.ExceptionDetails != nil {
+		return nil, fmt.Errorf("call page function: %s", result.ExceptionDetails.Text)
+	}
+
+	return decodeRemoteValue(result.Result)
+}
+
+func (p *Page) GetFrameTree(ctx context.Context) (*cdppage.FrameTree, error) {
+	result, err := cdppage.GetFrameTree().Do(ctx, p.session)
+	if err != nil {
+		return nil, fmt.Errorf("get frame tree: %w", err)
+	}
+
+	p.mu.Lock()
+	p.mainFrameID = string(result.FrameTree.Frame.ID)
+	p.mu.Unlock()
+
+	return &result.FrameTree, nil
+}
+
 func (p *Page) WaitForNavigation(ctx context.Context) error {
 	return p.WaitForNavigationUntil(ctx, WaitUntilLoad)
 }
@@ -249,6 +307,29 @@ func (p *Page) startEventLoop() {
 				}
 
 				p.recordFrameStoppedLoading(*stoppedLoading)
+			case cdpruntime.EventExecutionContextCreated:
+				created, err := cdpruntime.DecodeExecutionContextCreated(event.Params)
+				if err != nil {
+					p.failWaiters(fmt.Errorf("wait for navigation: %w", err))
+					return
+				}
+
+				p.recordExecutionContextCreated(*created)
+			case cdpruntime.EventExecutionContextDestroyed:
+				destroyed, err := cdpruntime.DecodeExecutionContextDestroyed(event.Params)
+				if err != nil {
+					p.failWaiters(fmt.Errorf("wait for navigation: %w", err))
+					return
+				}
+
+				p.recordExecutionContextDestroyed(*destroyed)
+			case cdpruntime.EventExecutionContextsCleared:
+				if _, err := cdpruntime.DecodeExecutionContextsCleared(event.Params); err != nil {
+					p.failWaiters(fmt.Errorf("wait for navigation: %w", err))
+					return
+				}
+
+				p.recordExecutionContextsCleared()
 			}
 		}
 
@@ -407,6 +488,47 @@ func (p *Page) recordFrameStoppedLoading(event cdppage.FrameStoppedLoading) {
 	p.resolveWaitersLocked()
 }
 
+func (p *Page) recordExecutionContextCreated(event cdpruntime.ExecutionContextCreated) {
+	var aux struct {
+		FrameID   string `json:"frameId"`
+		IsDefault bool   `json:"isDefault"`
+	}
+
+	_ = json.Unmarshal(event.Context.AuxData, &aux)
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.contextsByID[event.Context.ID] = executionContextState{
+		frameID:      aux.FrameID,
+		defaultWorld: aux.IsDefault,
+	}
+	if aux.FrameID != "" && aux.IsDefault {
+		p.defaultContextByFrame[aux.FrameID] = event.Context.ID
+	}
+}
+
+func (p *Page) recordExecutionContextDestroyed(event cdpruntime.ExecutionContextDestroyed) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	contextState, ok := p.contextsByID[event.ExecutionContextID]
+	if ok && contextState.defaultWorld {
+		if existing := p.defaultContextByFrame[contextState.frameID]; existing == event.ExecutionContextID {
+			delete(p.defaultContextByFrame, contextState.frameID)
+		}
+	}
+	delete(p.contextsByID, event.ExecutionContextID)
+}
+
+func (p *Page) recordExecutionContextsCleared() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	clear(p.contextsByID)
+	clear(p.defaultContextByFrame)
+}
+
 func (p *Page) ensureFrameStateLocked(frameID string) *frameState {
 	if p.frameStates[frameID] == nil {
 		p.frameStates[frameID] = &frameState{}
@@ -537,6 +659,53 @@ func (p *Page) awaitNavigationWait(ctx context.Context, waiter *navigationWaiter
 			return nil
 		}
 		return err
+	}
+}
+
+func (p *Page) mainWorldExecutionContextID() (cdpruntime.ExecutionContextID, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.mainFrameID != "" {
+		if executionContextID, ok := p.defaultContextByFrame[p.mainFrameID]; ok {
+			return executionContextID, nil
+		}
+	}
+
+	if len(p.defaultContextByFrame) == 1 {
+		for _, executionContextID := range p.defaultContextByFrame {
+			return executionContextID, nil
+		}
+	}
+
+	return 0, errors.New("call page function: no main-world execution context recorded")
+}
+
+func encodeCallArgument(value any) (cdpruntime.CallArgument, error) {
+	switch number := value.(type) {
+	case nil:
+		return cdpruntime.CallArgument{Value: json.RawMessage("null")}, nil
+	case float64:
+		return encodeFloatCallArgument(number), nil
+	case float32:
+		return encodeFloatCallArgument(float64(number)), nil
+	default:
+		return cdpruntime.CallArgument{Value: value}, nil
+	}
+}
+
+func encodeFloatCallArgument(value float64) cdpruntime.CallArgument {
+	switch {
+	case math.IsNaN(value):
+		return cdpruntime.CallArgument{UnserializableValue: "NaN"}
+	case math.IsInf(value, 1):
+		return cdpruntime.CallArgument{UnserializableValue: "Infinity"}
+	case math.IsInf(value, -1):
+		return cdpruntime.CallArgument{UnserializableValue: "-Infinity"}
+	case value == 0 && math.Signbit(value):
+		return cdpruntime.CallArgument{UnserializableValue: "-0"}
+	default:
+		return cdpruntime.CallArgument{Value: value}
 	}
 }
 

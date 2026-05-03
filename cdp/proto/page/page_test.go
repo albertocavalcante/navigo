@@ -20,6 +20,22 @@ func (f *fakeCaller) Call(_ context.Context, method string, params any, result a
 		value.LoaderID = "loader-1"
 	}
 
+	if value, ok := result.(*GetFrameTreeResult); ok {
+		value.FrameTree = FrameTree{
+			Frame: Frame{
+				ID:                             "frame-1",
+				LoaderID:                       "loader-1",
+				URL:                            "https://example.com",
+				DOMainAndRegistry:              "example.com",
+				SecurityOrigin:                 "https://example.com",
+				MimeType:                       "text/html",
+				SecureContextType:              "Secure",
+				CrossOriginIsolatedContextType: "NotIsolated",
+				GatedAPIFeatures:               []GatedAPIFeatures{},
+			},
+		}
+	}
+
 	return nil
 }
 
@@ -64,6 +80,24 @@ func TestSetLifecycleEventsEnabledDo(t *testing.T) {
 
 	if got, want := caller.method, CommandSetLifecycleEventsEnabled; got != want {
 		t.Fatalf("caller.method = %q, want %q", got, want)
+	}
+}
+
+func TestGetFrameTreeDo(t *testing.T) {
+	t.Parallel()
+
+	caller := &fakeCaller{}
+	result, err := GetFrameTree().Do(context.Background(), caller)
+	if err != nil {
+		t.Fatalf("GetFrameTree().Do() error = %v", err)
+	}
+
+	if got, want := caller.method, CommandGetFrameTree; got != want {
+		t.Fatalf("caller.method = %q, want %q", got, want)
+	}
+
+	if got, want := string(result.FrameTree.Frame.ID), "frame-1"; got != want {
+		t.Fatalf("result.FrameTree.Frame.ID = %q, want %q", got, want)
 	}
 }
 
