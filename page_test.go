@@ -3,12 +3,14 @@ package navigo
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/albertocavalcante/navigo/cdp"
 	cdppage "github.com/albertocavalcante/navigo/cdp/proto/page"
+	cdpruntime "github.com/albertocavalcante/navigo/cdp/proto/runtime"
 	cdptarget "github.com/albertocavalcante/navigo/cdp/proto/target"
 	"github.com/albertocavalcante/navigo/launcher"
 )
@@ -69,12 +71,13 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 	}()
 
 	expectMethodAndReplyWithSession(t, transport, 5, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1","loaderId":"loader-1"}`)
+	transport.reads <- []byte(`{"method":"Page.frameNavigated","sessionId":"session-1","params":{"frame":{"id":"frame-1","loaderId":"loader-1","url":"https://example.com"}}}`)
 
 	select {
 	case err := <-errCh:
 		t.Fatalf("page.Navigate() error = %v", err)
 	case result := <-navResultCh:
-		if got, want := result.FrameID, "frame-1"; got != want {
+		if got, want := string(result.FrameID), "frame-1"; got != want {
 			t.Fatalf("result.FrameID = %q, want %q", got, want)
 		}
 	case <-time.After(time.Second):
@@ -85,8 +88,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 	go func() {
 		waitErrCh <- page.WaitForNavigation(context.Background())
 	}()
-
-	transport.reads <- []byte(`{"method":"Page.loadEventFired","sessionId":"session-1","params":{"timestamp":123.45}}`)
+	transport.reads <- []byte(`{"method":"Page.lifecycleEvent","sessionId":"session-1","params":{"frameId":"frame-1","loaderId":"loader-1","name":"load","timestamp":123.45}}`)
 
 	select {
 	case err := <-waitErrCh:
@@ -101,7 +103,6 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 	go func() {
 		domWaitErrCh <- page.WaitForNavigationUntil(context.Background(), WaitUntilDOMContentLoaded)
 	}()
-
 	transport.reads <- []byte(`{"method":"Page.lifecycleEvent","sessionId":"session-1","params":{"frameId":"frame-1","loaderId":"loader-1","name":"DOMContentLoaded","timestamp":124.45}}`)
 
 	select {
@@ -113,9 +114,197 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		t.Fatal("timed out waiting for page.WaitForNavigationUntil(DOMContentLoaded)")
 	}
 
+	evalValueCh := make(chan any, 1)
+	go func() {
+		value, err := page.Evaluate(context.Background(), "1 + 1")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		evalValueCh <- value
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 6, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"number","value":2}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("page.Evaluate() error = %v", err)
+	case value := <-evalValueCh:
+		number, ok := value.(float64)
+		if !ok {
+			t.Fatalf("value type = %T, want float64", value)
+		}
+		if got, want := number, 2.0; got != want {
+			t.Fatalf("value = %v, want %v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for page.Evaluate()")
+	}
+
+	evalSpecialCh := make(chan any, 1)
+	go func() {
+		value, err := page.Evaluate(context.Background(), "NaN")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		evalSpecialCh <- value
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 7, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"number","unserializableValue":"NaN"}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("page.Evaluate(NaN) error = %v", err)
+	case value := <-evalSpecialCh:
+		number, ok := value.(float64)
+		if !ok {
+			t.Fatalf("value type = %T, want float64", value)
+		}
+		if !isNaN(number) {
+			t.Fatalf("value = %v, want NaN", number)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for page.Evaluate(NaN)")
+	}
+
+	sameDocResultCh := make(chan *cdppage.NavigateResult, 1)
+	go func() {
+		result, err := page.Navigate(context.Background(), "https://example.com/#hash")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		sameDocResultCh <- result
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 8, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("same-document page.Navigate() error = %v", err)
+	case <-sameDocResultCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for same-document page.Navigate()")
+	}
+
+	commitErrCh := make(chan error, 1)
+	go func() {
+		commitErrCh <- page.WaitForNavigationUntil(context.Background(), WaitUntilCommit)
+	}()
+	transport.reads <- []byte(`{"method":"Page.navigatedWithinDocument","sessionId":"session-1","params":{"frameId":"frame-1","url":"https://example.com/#hash"}}`)
+
+	select {
+	case err := <-commitErrCh:
+		if err != nil {
+			t.Fatalf("page.WaitForNavigationUntil(commit) error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for page.WaitForNavigationUntil(commit)")
+	}
+
 	if err := browser.Close(); err != nil {
 		t.Fatalf("browser.Close() error = %v", err)
 	}
+}
+
+func TestPageGotoWaitsAtomically(t *testing.T) {
+	t.Parallel()
+
+	transport := newFakeTransport()
+	conn := cdp.NewConn(transport)
+	browser := &Browser{
+		conn:    conn,
+		version: launcher.Version{Browser: "Chrome"},
+		cancel:  func() {},
+		done:    make(chan error, 1),
+	}
+
+	go func() {
+		browser.done <- conn.Run(context.Background())
+	}()
+
+	pageCh := make(chan *Page, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		page, err := browser.NewPage(context.Background())
+		if err != nil {
+			errCh <- err
+			return
+		}
+		pageCh <- page
+	}()
+
+	expectMethodAndReply(t, transport, 1, cdptarget.CommandCreateTarget, `{"targetId":"target-1"}`)
+	expectMethodAndReply(t, transport, 2, cdptarget.CommandAttachToTarget, `{"sessionId":"session-1"}`)
+	expectMethodAndReplyWithSession(t, transport, 3, "session-1", cdppage.CommandEnable, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 4, "session-1", cdppage.CommandSetLifecycleEventsEnabled, `{}`)
+
+	var page *Page
+	select {
+	case err := <-errCh:
+		t.Fatalf("browser.NewPage() error = %v", err)
+	case page = <-pageCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for browser.NewPage()")
+	}
+
+	gotoResultCh := make(chan *cdppage.NavigateResult, 1)
+	go func() {
+		result, err := page.Goto(context.Background(), "https://example.com")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		gotoResultCh <- result
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 5, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1","loaderId":"loader-1"}`)
+	transport.reads <- []byte(`{"method":"Page.frameNavigated","sessionId":"session-1","params":{"frame":{"id":"frame-1","loaderId":"loader-1","url":"https://example.com"}}}`)
+	transport.reads <- []byte(`{"method":"Page.lifecycleEvent","sessionId":"session-1","params":{"frameId":"frame-1","loaderId":"loader-1","name":"load","timestamp":123.45}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("page.Goto() error = %v", err)
+	case result := <-gotoResultCh:
+		if got, want := result.LoaderID, "loader-1"; got != want {
+			t.Fatalf("result.LoaderID = %q, want %q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for page.Goto()")
+	}
+
+	sameDocResultCh := make(chan *cdppage.NavigateResult, 1)
+	go func() {
+		result, err := page.Goto(context.Background(), "https://example.com/#hash", WithWaitUntil(WaitUntilCommit))
+		if err != nil {
+			errCh <- err
+			return
+		}
+		sameDocResultCh <- result
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 6, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
+	transport.reads <- []byte(`{"method":"Page.navigatedWithinDocument","sessionId":"session-1","params":{"frameId":"frame-1","url":"https://example.com/#hash"}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("same-document page.Goto() error = %v", err)
+	case result := <-sameDocResultCh:
+		if got, want := string(result.FrameID), "frame-1"; got != want {
+			t.Fatalf("result.FrameID = %q, want %q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for same-document page.Goto()")
+	}
+
+	if err := browser.Close(); err != nil {
+		t.Fatalf("browser.Close() error = %v", err)
+	}
+}
+
+func isNaN(value float64) bool {
+	return math.IsNaN(value)
 }
 
 func expectMethodAndReply(t *testing.T, transport *fakeTransport, id int, method string, result string) {

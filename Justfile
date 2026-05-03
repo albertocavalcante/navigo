@@ -38,4 +38,20 @@ tidy:
 
 tidy-all: tidy sync-tools
 
+print-cdp-domains input:
+    go run ./tools/cdpgen -input {{input}} -print-domains
+
+render-cdp-domain input domain:
+    go run ./tools/cdpgen -input {{input}} -render-domain {{domain}}
+
+gen-cdp input output domains:
+    go run ./tools/cdpgen -input {{input}} -generate-domains {{domains}} -out {{output}}
+
+refresh-cdp-protocol:
+    curl -fsSL https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/json/browser_protocol.json -o tools/cdpgen/testdata/browser_protocol.json
+    curl -fsSL https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/json/js_protocol.json -o tools/cdpgen/testdata/js_protocol.json
+
+gen-cdp-seed:
+    go run ./tools/cdpgen -input tools/cdpgen/testdata/browser_protocol.json,tools/cdpgen/testdata/js_protocol.json -generate-domains Browser,Target,Page,Runtime -out cdp/proto
+
 check: fmt-check vet lint test-race build

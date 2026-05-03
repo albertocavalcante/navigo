@@ -27,7 +27,7 @@ func Connect(ctx context.Context, rawURL string) (*Browser, error) {
 		return nil, fmt.Errorf("connect browser: %w", err)
 	}
 
-	runCtx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancel(ctx)
 	browser := &Browser{
 		conn:    conn,
 		version: version,

@@ -18,7 +18,7 @@ func (f *fakeCaller) Call(_ context.Context, method string, params any, result a
 	res.ProtocolVersion = "1.3"
 	res.Product = "Chrome/136.0.0.0"
 	res.UserAgent = "Mozilla/5.0"
-	res.JavaScriptVersion = "12.3.4"
+	res.JSVersion = "12.3.4"
 
 	return nil
 }

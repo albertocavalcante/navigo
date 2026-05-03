@@ -49,7 +49,7 @@ func TestNavigateDo(t *testing.T) {
 		t.Fatalf("caller.method = %q, want %q", got, want)
 	}
 
-	if got, want := result.FrameID, "frame-1"; got != want {
+	if got, want := string(result.FrameID), "frame-1"; got != want {
 		t.Fatalf("result.FrameID = %q, want %q", got, want)
 	}
 }
@@ -90,5 +90,31 @@ func TestDecodeLifecycleEvent(t *testing.T) {
 
 	if got, want := event.Name, LifecycleEventDOMContentLoaded; got != want {
 		t.Fatalf("event.Name = %q, want %q", got, want)
+	}
+}
+
+func TestDecodeFrameNavigated(t *testing.T) {
+	t.Parallel()
+
+	event, err := DecodeFrameNavigated(json.RawMessage(`{"frame":{"id":"frame-1","loaderId":"loader-1","url":"https://example.com"}}`))
+	if err != nil {
+		t.Fatalf("DecodeFrameNavigated() error = %v", err)
+	}
+
+	if got, want := string(event.Frame.ID), "frame-1"; got != want {
+		t.Fatalf("event.Frame.ID = %q, want %q", got, want)
+	}
+}
+
+func TestDecodeNavigatedWithinDocument(t *testing.T) {
+	t.Parallel()
+
+	event, err := DecodeNavigatedWithinDocument(json.RawMessage(`{"frameId":"frame-1","url":"https://example.com/#hash"}`))
+	if err != nil {
+		t.Fatalf("DecodeNavigatedWithinDocument() error = %v", err)
+	}
+
+	if got, want := string(event.FrameID), "frame-1"; got != want {
+		t.Fatalf("event.FrameID = %q, want %q", got, want)
 	}
 }
