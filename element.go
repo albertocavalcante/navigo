@@ -167,6 +167,28 @@ func (e *Element) Type(ctx context.Context, text string) error {
 	return nil
 }
 
+func (e *Element) Fill(ctx context.Context, text string) error {
+	if err := e.Focus(ctx); err != nil {
+		return err
+	}
+
+	selected, err := e.selectEditableText(ctx)
+	if err != nil {
+		return err
+	}
+	if selected {
+		if err := e.page.Keyboard().Press(ctx, "Backspace"); err != nil {
+			return fmt.Errorf("fill element: clear selected text: %w", err)
+		}
+	}
+
+	if err := e.page.Keyboard().Type(ctx, text); err != nil {
+		return fmt.Errorf("fill element: %w", err)
+	}
+
+	return nil
+}
+
 func (e *Element) Press(ctx context.Context, key string) error {
 	if err := e.Focus(ctx); err != nil {
 		return err
@@ -177,6 +199,37 @@ func (e *Element) Press(ctx context.Context, key string) error {
 	}
 
 	return nil
+}
+
+func (e *Element) selectEditableText(ctx context.Context) (bool, error) {
+	value, err := e.handle.CallFunction(ctx, `function() {
+		if (typeof this.select === "function") {
+			this.select();
+			return true;
+		}
+		if (this.isContentEditable) {
+			const selection = this.ownerDocument && this.ownerDocument.getSelection ? this.ownerDocument.getSelection() : null;
+			if (!selection) {
+				return false;
+			}
+			const range = this.ownerDocument.createRange();
+			range.selectNodeContents(this);
+			selection.removeAllRanges();
+			selection.addRange(range);
+			return true;
+		}
+		return false;
+	}`)
+	if err != nil {
+		return false, fmt.Errorf("fill element: select existing text: %w", err)
+	}
+
+	selected, ok := value.(bool)
+	if !ok {
+		return false, fmt.Errorf("fill element: unexpected select result type %T", value)
+	}
+
+	return selected, nil
 }
 
 func (e *Element) QuerySelector(ctx context.Context, selector string) (*Element, error) {

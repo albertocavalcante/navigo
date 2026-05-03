@@ -13,6 +13,8 @@ func TestKeyEventSpec(t *testing.T) {
 		wantVK   int
 	}{
 		{key: "Enter", wantKey: "Enter", wantCode: "Enter", wantText: "\r", wantVK: 13},
+		{key: "Escape", wantKey: "Escape", wantCode: "Escape", wantText: "", wantVK: 27},
+		{key: "ArrowLeft", wantKey: "ArrowLeft", wantCode: "ArrowLeft", wantText: "", wantVK: 37},
 		{key: "a", wantKey: "a", wantCode: "a", wantText: "a", wantVK: int('a')},
 	}
 

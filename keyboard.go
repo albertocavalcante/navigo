@@ -84,6 +84,42 @@ func keyEventSpec(key string) (keySpec, error) {
 			code:                  "Backspace",
 			windowsVirtualKeyCode: 8,
 		}, nil
+	case "Escape":
+		return keySpec{
+			key:                   "Escape",
+			code:                  "Escape",
+			windowsVirtualKeyCode: 27,
+		}, nil
+	case "ArrowLeft":
+		return keySpec{
+			key:                   "ArrowLeft",
+			code:                  "ArrowLeft",
+			windowsVirtualKeyCode: 37,
+		}, nil
+	case "ArrowUp":
+		return keySpec{
+			key:                   "ArrowUp",
+			code:                  "ArrowUp",
+			windowsVirtualKeyCode: 38,
+		}, nil
+	case "ArrowRight":
+		return keySpec{
+			key:                   "ArrowRight",
+			code:                  "ArrowRight",
+			windowsVirtualKeyCode: 39,
+		}, nil
+	case "ArrowDown":
+		return keySpec{
+			key:                   "ArrowDown",
+			code:                  "ArrowDown",
+			windowsVirtualKeyCode: 40,
+		}, nil
+	case "Delete":
+		return keySpec{
+			key:                   "Delete",
+			code:                  "Delete",
+			windowsVirtualKeyCode: 46,
+		}, nil
 	}
 
 	r, size := utf8.DecodeRuneInString(key)
