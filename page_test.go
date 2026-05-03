@@ -289,10 +289,11 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 	expectMethodAndReplyWithSession(t, transport, 18, "session-1", cdpdom.CommandDescribeNode, `{"node":{"nodeId":3,"backendNodeId":33,"nodeType":1,"nodeName":"SPAN","localName":"span","nodeValue":"","attributes":["class","child"]}}`)
 	expectMethodAndReplyWithSession(t, transport, 19, "session-1", cdpdom.CommandResolveNode, `{"object":{"type":"object","subtype":"node","className":"HTMLSpanElement","objectId":"obj-node-2","description":"span.child"}}`)
 
+	var child *Element
 	select {
 	case err := <-errCh:
 		t.Fatalf("element.QuerySelector() error = %v", err)
-	case child := <-childElementCh:
+	case child = <-childElementCh:
 		if child == nil {
 			t.Fatal("element.QuerySelector() = nil, want child element")
 		}
@@ -301,6 +302,179 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for element.QuerySelector()")
+	}
+
+	attributesCh := make(chan map[string]string, 1)
+	go func() {
+		attributes, err := element.Attributes(context.Background())
+		if err != nil {
+			errCh <- err
+			return
+		}
+		attributesCh <- attributes
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 20, "session-1", cdpdom.CommandGetAttributes, `{"attributes":["id","app","data-role","main"]}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("element.Attributes() error = %v", err)
+	case attributes := <-attributesCh:
+		if got, want := attributes["id"], "app"; got != want {
+			t.Fatalf("attributes[id] = %q, want %q", got, want)
+		}
+		if got, want := attributes["data-role"], "main"; got != want {
+			t.Fatalf("attributes[data-role] = %q, want %q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for element.Attributes()")
+	}
+
+	type attributeResult struct {
+		value string
+		ok    bool
+	}
+	attributeCh := make(chan attributeResult, 1)
+	go func() {
+		value, ok, err := element.Attribute(context.Background(), "id")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		attributeCh <- attributeResult{value: value, ok: ok}
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 21, "session-1", cdpdom.CommandGetAttributes, `{"attributes":["id","app","data-role","main"]}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("element.Attribute() error = %v", err)
+	case result := <-attributeCh:
+		if !result.ok {
+			t.Fatal("element.Attribute(id) ok = false, want true")
+		}
+		if got, want := result.value, "app"; got != want {
+			t.Fatalf("element.Attribute(id) = %q, want %q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for element.Attribute()")
+	}
+
+	innerHTMLCh := make(chan string, 1)
+	go func() {
+		innerHTML, err := element.InnerHTML(context.Background())
+		if err != nil {
+			errCh <- err
+			return
+		}
+		innerHTMLCh <- innerHTML
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 22, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"string","value":"<span class=\"child\"></span>"}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("element.InnerHTML() error = %v", err)
+	case innerHTML := <-innerHTMLCh:
+		if got, want := innerHTML, `<span class="child"></span>`; got != want {
+			t.Fatalf("element.InnerHTML() = %q, want %q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for element.InnerHTML()")
+	}
+
+	textContentCh := make(chan string, 1)
+	go func() {
+		textContent, err := element.TextContent(context.Background())
+		if err != nil {
+			errCh <- err
+			return
+		}
+		textContentCh <- textContent
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 23, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"string","value":"child text"}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("element.TextContent() error = %v", err)
+	case textContent := <-textContentCh:
+		if got, want := textContent, "child text"; got != want {
+			t.Fatalf("element.TextContent() = %q, want %q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for element.TextContent()")
+	}
+
+	innerTextCh := make(chan string, 1)
+	go func() {
+		innerText, err := element.InnerText(context.Background())
+		if err != nil {
+			errCh <- err
+			return
+		}
+		innerTextCh <- innerText
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 24, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"string","value":"child text"}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("element.InnerText() error = %v", err)
+	case innerText := <-innerTextCh:
+		if got, want := innerText, "child text"; got != want {
+			t.Fatalf("element.InnerText() = %q, want %q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for element.InnerText()")
+	}
+
+	focusErrCh := make(chan error, 1)
+	go func() {
+		focusErrCh <- element.Focus(context.Background())
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 25, "session-1", cdpdom.CommandFocus, `{}`)
+
+	select {
+	case err := <-focusErrCh:
+		if err != nil {
+			t.Fatalf("element.Focus() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for element.Focus()")
+	}
+
+	scrollErrCh := make(chan error, 1)
+	go func() {
+		scrollErrCh <- element.ScrollIntoView(context.Background())
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 26, "session-1", cdpdom.CommandScrollIntoViewIfNeeded, `{}`)
+
+	select {
+	case err := <-scrollErrCh:
+		if err != nil {
+			t.Fatalf("element.ScrollIntoView() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for element.ScrollIntoView()")
+	}
+
+	setAttributeErrCh := make(chan error, 1)
+	go func() {
+		setAttributeErrCh <- element.SetAttribute(context.Background(), "data-state", "ready")
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 27, "session-1", cdpdom.CommandSetAttributeValue, `{}`)
+
+	select {
+	case err := <-setAttributeErrCh:
+		if err != nil {
+			t.Fatalf("element.SetAttribute() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for element.SetAttribute()")
 	}
 
 	handleCh := make(chan *Handle, 1)
@@ -313,7 +487,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		handleCh <- handle
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 20, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"object","className":"Object","objectId":"obj-1"}}`)
+	expectMethodAndReplyWithSession(t, transport, 28, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"object","className":"Object","objectId":"obj-1"}}`)
 
 	var handle *Handle
 	select {
@@ -337,7 +511,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		jsonValueCh <- value
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 21, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"object","value":{"answer":42}}}`)
+	expectMethodAndReplyWithSession(t, transport, 29, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"object","value":{"answer":42}}}`)
 
 	select {
 	case err := <-errCh:
@@ -364,7 +538,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		callWithHandleCh <- value
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 22, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"number","value":42}}`)
+	expectMethodAndReplyWithSession(t, transport, 30, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"number","value":42}}`)
 
 	select {
 	case err := <-errCh:
@@ -381,6 +555,31 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		t.Fatal("timed out waiting for page.CallFunction(handle)")
 	}
 
+	elementFromHandleCh := make(chan *Element, 1)
+	go func() {
+		elementFromHandle, asErr := child.Handle().AsElement(context.Background())
+		if asErr != nil {
+			errCh <- asErr
+			return
+		}
+		elementFromHandleCh <- elementFromHandle
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 31, "session-1", cdpdom.CommandRequestNode, `{"nodeId":3}`)
+	expectMethodAndReplyWithSession(t, transport, 32, "session-1", cdpdom.CommandDescribeNode, `{"node":{"nodeId":3,"backendNodeId":33,"nodeType":1,"nodeName":"SPAN","localName":"span","nodeValue":"","attributes":["class","child"]}}`)
+	expectMethodAndReplyWithSession(t, transport, 33, "session-1", cdpdom.CommandResolveNode, `{"object":{"type":"object","subtype":"node","className":"HTMLSpanElement","objectId":"obj-node-2b","description":"span.child"}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("handle.AsElement() error = %v", err)
+	case elementFromHandle := <-elementFromHandleCh:
+		if got, want := elementFromHandle.NodeID(), 3; got != want {
+			t.Fatalf("elementFromHandle.NodeID() = %d, want %d", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for handle.AsElement()")
+	}
+
 	secondHandleCh := make(chan *Handle, 1)
 	go func() {
 		nextHandle, err := page.CallFunctionHandle(context.Background(), "function() { return ({count: 2}); }")
@@ -391,7 +590,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		secondHandleCh <- nextHandle
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 23, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"object","className":"Object","objectId":"obj-2"}}`)
+	expectMethodAndReplyWithSession(t, transport, 34, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"object","className":"Object","objectId":"obj-2"}}`)
 
 	var secondHandle *Handle
 	select {
@@ -415,7 +614,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		handleCallCh <- value
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 24, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"number","value":5}}`)
+	expectMethodAndReplyWithSession(t, transport, 35, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"number","value":5}}`)
 
 	select {
 	case err := <-errCh:
@@ -437,7 +636,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		releaseErrCh <- handle.Release(context.Background())
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 25, "session-1", cdpruntime.CommandReleaseObject, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 36, "session-1", cdpruntime.CommandReleaseObject, `{}`)
 
 	select {
 	case err := <-releaseErrCh:
@@ -462,7 +661,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		sameDocResultCh <- result
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 26, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
+	expectMethodAndReplyWithSession(t, transport, 37, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
 
 	select {
 	case err := <-errCh:
