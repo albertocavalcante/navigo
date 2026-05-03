@@ -816,6 +816,38 @@ func (p *Page) resolveNodeIDToElement(ctx context.Context, nodeID cdpdom.NodeID)
 	}, nil
 }
 
+func (p *Page) resolveBackendNodeIDToElement(ctx context.Context, backendNodeID int) (*Element, error) {
+	nodeResult, err := cdpdom.DescribeNode().WithBackendNodeID(cdpdom.BackendNodeID(backendNodeID)).Do(ctx, p.session)
+	if err != nil {
+		return nil, fmt.Errorf("describe backend node: %w", err)
+	}
+
+	executionContextID, err := p.mainWorldExecutionContextID()
+	if err != nil {
+		return nil, err
+	}
+
+	resolveResult, err := cdpdom.ResolveNode().
+		WithBackendNodeID(backendNodeID).
+		WithExecutionContextID(int(executionContextID)).
+		Do(ctx, p.session)
+	if err != nil {
+		return nil, fmt.Errorf("resolve backend node: %w", err)
+	}
+
+	handle, err := newHandle(p, runtimeObjectFromDOM(resolveResult.Object), "resolve backend node")
+	if err != nil {
+		return nil, err
+	}
+
+	return &Element{
+		page:          p,
+		handle:        handle,
+		nodeID:        nodeResult.Node.NodeID,
+		backendNodeID: nodeResult.Node.BackendNodeID,
+	}, nil
+}
+
 func encodeCallArgument(value any) (cdpruntime.CallArgument, error) {
 	switch number := value.(type) {
 	case *Handle:

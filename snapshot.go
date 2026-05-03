@@ -10,6 +10,7 @@ import (
 )
 
 type Snapshot struct {
+	page     *Page
 	nodes    []*SnapshotNode
 	byID     map[string]*SnapshotNode
 	byRef    map[string]*SnapshotNode
@@ -37,11 +38,12 @@ func (p *Page) Snapshot(ctx context.Context) (*Snapshot, error) {
 		return nil, fmt.Errorf("snapshot page accessibility tree: %w", err)
 	}
 
-	return newSnapshot(result.Nodes), nil
+	return newSnapshot(p, result.Nodes), nil
 }
 
-func newSnapshot(nodes []cdpaccessibility.AXNode) *Snapshot {
+func newSnapshot(page *Page, nodes []cdpaccessibility.AXNode) *Snapshot {
 	snapshot := &Snapshot{
+		page:  page,
 		nodes: make([]*SnapshotNode, 0, len(nodes)),
 		byID:  make(map[string]*SnapshotNode, len(nodes)),
 		byRef: make(map[string]*SnapshotNode),
@@ -126,6 +128,53 @@ func (s *Snapshot) FindByName(name string) []*SnapshotNode {
 
 func (s *Snapshot) Markdown() string {
 	return s.markdown
+}
+
+func (s *Snapshot) Click(ctx context.Context, ref string) error {
+	element, err := s.elementForRef(ctx, ref)
+	if err != nil {
+		return err
+	}
+
+	if err := element.Click(ctx); err != nil {
+		return fmt.Errorf("snapshot click %q: %w", ref, err)
+	}
+
+	return nil
+}
+
+func (s *Snapshot) Type(ctx context.Context, ref string, text string) error {
+	element, err := s.elementForRef(ctx, ref)
+	if err != nil {
+		return err
+	}
+
+	if err := element.Type(ctx, text); err != nil {
+		return fmt.Errorf("snapshot type %q: %w", ref, err)
+	}
+
+	return nil
+}
+
+func (s *Snapshot) elementForRef(ctx context.Context, ref string) (*Element, error) {
+	if s.page == nil {
+		return nil, fmt.Errorf("snapshot action %q: snapshot is not attached to a page", ref)
+	}
+
+	node, ok := s.FindByRef(ref)
+	if !ok {
+		return nil, fmt.Errorf("snapshot action %q: ref not found", ref)
+	}
+	if node.BackendNodeID == 0 {
+		return nil, fmt.Errorf("snapshot action %q: node has no backend DOM node ID", ref)
+	}
+
+	element, err := s.page.resolveBackendNodeIDToElement(ctx, node.BackendNodeID)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot action %q: %w", ref, err)
+	}
+
+	return element, nil
 }
 
 func (s *Snapshot) renderMarkdown() string {

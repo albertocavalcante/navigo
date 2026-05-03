@@ -14,6 +14,9 @@ type Keyboard struct {
 }
 
 func (p *Page) Keyboard() *Keyboard {
+	if p.keyboard.session == nil {
+		p.keyboard.session = p.session
+	}
 	return &p.keyboard
 }
 

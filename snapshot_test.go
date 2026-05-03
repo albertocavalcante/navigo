@@ -4,9 +4,13 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/albertocavalcante/navigo/cdp"
 	cdpaccessibility "github.com/albertocavalcante/navigo/cdp/proto/accessibility"
+	cdpdom "github.com/albertocavalcante/navigo/cdp/proto/dom"
+	cdpinput "github.com/albertocavalcante/navigo/cdp/proto/input"
+	cdpruntime "github.com/albertocavalcante/navigo/cdp/proto/runtime"
 )
 
 func TestPageSnapshot(t *testing.T) {
@@ -72,5 +76,90 @@ func TestPageSnapshot(t *testing.T) {
 				t.Fatalf("snapshot.Markdown() missing %q\n%s", snippet, markdown)
 			}
 		}
+	}
+}
+
+func TestSnapshotActions(t *testing.T) {
+	t.Parallel()
+
+	transport := newFakeTransport()
+	conn := cdp.NewConn(transport)
+	go func() {
+		_ = conn.Run(context.Background())
+	}()
+
+	page := &Page{
+		session:               conn.RootSession(),
+		defaultContextByFrame: map[string]cdpruntime.ExecutionContextID{"frame-1": 7},
+		mainFrameID:           "frame-1",
+	}
+
+	resultCh := make(chan *Snapshot, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		snapshot, err := page.Snapshot(context.Background())
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- snapshot
+	}()
+
+	expectMethodAndReply(t, transport, 1, cdpaccessibility.CommandGetFullAXTree, `{"nodes":[
+		{"nodeId":"ax-root","ignored":false,"role":{"type":"role","value":"RootWebArea"},"name":{"type":"string","value":"Example"},"childIds":["ax-input"]},
+		{"nodeId":"ax-input","ignored":false,"role":{"type":"role","value":"textbox"},"name":{"type":"string","value":"Search"},"backendDOMNodeId":22}
+	]}`)
+
+	var snapshot *Snapshot
+	select {
+	case err := <-errCh:
+		t.Fatalf("page.Snapshot() error = %v", err)
+	case snapshot = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for snapshot")
+	}
+	if snapshot == nil {
+		t.Fatal("snapshot = nil, want snapshot")
+	}
+
+	clickErrCh := make(chan error, 1)
+	go func() {
+		clickErrCh <- snapshot.Click(context.Background(), "r22")
+	}()
+
+	expectMethodAndReply(t, transport, 2, cdpdom.CommandDescribeNode, `{"node":{"nodeId":2,"backendNodeId":22,"nodeType":1,"nodeName":"INPUT","localName":"input","nodeValue":""}}`)
+	expectMethodAndReply(t, transport, 3, cdpdom.CommandResolveNode, `{"object":{"type":"object","subtype":"node","className":"HTMLInputElement","objectId":"obj-node-1"}}`)
+	expectMethodAndReply(t, transport, 4, cdpdom.CommandScrollIntoViewIfNeeded, `{}`)
+	expectMethodAndReply(t, transport, 5, cdpdom.CommandGetContentQuads, `{"quads":[[10,20,110,20,110,60,10,60]]}`)
+	expectMethodAndReply(t, transport, 6, cdpinput.CommandDispatchMouseEvent, `{}`)
+	expectMethodAndReply(t, transport, 7, cdpinput.CommandDispatchMouseEvent, `{}`)
+	expectMethodAndReply(t, transport, 8, cdpinput.CommandDispatchMouseEvent, `{}`)
+
+	select {
+	case err := <-clickErrCh:
+		if err != nil {
+			t.Fatalf("snapshot.Click() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for snapshot.Click()")
+	}
+
+	typeErrCh := make(chan error, 1)
+	go func() {
+		typeErrCh <- snapshot.Type(context.Background(), "r22", "hello")
+	}()
+
+	expectMethodAndReply(t, transport, 9, cdpdom.CommandDescribeNode, `{"node":{"nodeId":2,"backendNodeId":22,"nodeType":1,"nodeName":"INPUT","localName":"input","nodeValue":""}}`)
+	expectMethodAndReply(t, transport, 10, cdpdom.CommandResolveNode, `{"object":{"type":"object","subtype":"node","className":"HTMLInputElement","objectId":"obj-node-2"}}`)
+	expectMethodAndReply(t, transport, 11, cdpdom.CommandFocus, `{}`)
+	expectMethodAndReply(t, transport, 12, cdpinput.CommandInsertText, `{}`)
+
+	select {
+	case err := <-typeErrCh:
+		if err != nil {
+			t.Fatalf("snapshot.Type() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for snapshot.Type()")
 	}
 }
