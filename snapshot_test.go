@@ -37,7 +37,7 @@ func TestPageSnapshot(t *testing.T) {
 
 	expectMethodAndReply(t, transport, 1, cdpaccessibility.CommandGetFullAXTree, `{"nodes":[
 		{"nodeId":"ax-root","ignored":false,"role":{"type":"role","value":"RootWebArea"},"name":{"type":"string","value":"Example"},"childIds":["ax-button"]},
-		{"nodeId":"ax-button","ignored":false,"role":{"type":"role","value":"button"},"name":{"type":"string","value":"Submit"},"backendDOMNodeId":22}
+		{"nodeId":"ax-button","ignored":false,"role":{"type":"role","value":"button"},"name":{"type":"string","value":"Submit form"},"backendDOMNodeId":22,"properties":[{"name":"disabled","value":{"type":"boolean","value":true}}]}
 	]}`)
 
 	select {
@@ -48,11 +48,11 @@ func TestPageSnapshot(t *testing.T) {
 			t.Fatalf("len(snapshot.Nodes()) = %d, want %d", got, want)
 		}
 
-		buttons := snapshot.FindByRole("button")
+		buttons := snapshot.FindByRole("butt")
 		if got, want := len(buttons), 1; got != want {
 			t.Fatalf("len(snapshot.FindByRole(button)) = %d, want %d", got, want)
 		}
-		if got, want := buttons[0].Name, "Submit"; got != want {
+		if got, want := buttons[0].Name, "Submit form"; got != want {
 			t.Fatalf("buttons[0].Name = %q, want %q", got, want)
 		}
 		if got, want := buttons[0].Ref, "r22"; got != want {
@@ -67,10 +67,20 @@ func TestPageSnapshot(t *testing.T) {
 			t.Fatalf("node.Role = %q, want %q", got, want)
 		}
 
+		interactive := snapshot.InteractiveNodes()
+		if got, want := len(interactive), 1; got != want {
+			t.Fatalf("len(snapshot.InteractiveNodes()) = %d, want %d", got, want)
+		}
+
+		byName := snapshot.FindByName("submit")
+		if got, want := len(byName), 1; got != want {
+			t.Fatalf("len(snapshot.FindByName(submit)) = %d, want %d", got, want)
+		}
+
 		markdown := snapshot.Markdown()
 		for _, snippet := range []string{
 			`- RootWebArea "Example"`,
-			`- button "Submit" [r22]`,
+			`- button "Submit form" [r22] [disabled]`,
 		} {
 			if !strings.Contains(markdown, snippet) {
 				t.Fatalf("snapshot.Markdown() missing %q\n%s", snippet, markdown)
@@ -161,5 +171,27 @@ func TestSnapshotActions(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for snapshot.Type()")
+	}
+
+	fillErrCh := make(chan error, 1)
+	go func() {
+		fillErrCh <- snapshot.Fill(context.Background(), "r22", "updated")
+	}()
+
+	expectMethodAndReply(t, transport, 13, cdpdom.CommandDescribeNode, `{"node":{"nodeId":2,"backendNodeId":22,"nodeType":1,"nodeName":"INPUT","localName":"input","nodeValue":""}}`)
+	expectMethodAndReply(t, transport, 14, cdpdom.CommandResolveNode, `{"object":{"type":"object","subtype":"node","className":"HTMLInputElement","objectId":"obj-node-3"}}`)
+	expectMethodAndReply(t, transport, 15, cdpdom.CommandFocus, `{}`)
+	expectMethodAndReply(t, transport, 16, cdpruntime.CommandCallFunctionOn, `{"result":{"type":"boolean","value":true}}`)
+	expectMethodAndReply(t, transport, 17, cdpinput.CommandDispatchKeyEvent, `{}`)
+	expectMethodAndReply(t, transport, 18, cdpinput.CommandDispatchKeyEvent, `{}`)
+	expectMethodAndReply(t, transport, 19, cdpinput.CommandInsertText, `{}`)
+
+	select {
+	case err := <-fillErrCh:
+		if err != nil {
+			t.Fatalf("snapshot.Fill() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for snapshot.Fill()")
 	}
 }

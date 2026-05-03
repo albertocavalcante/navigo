@@ -108,8 +108,9 @@ func (s *Snapshot) FindByRef(ref string) (*SnapshotNode, bool) {
 
 func (s *Snapshot) FindByRole(role string) []*SnapshotNode {
 	result := make([]*SnapshotNode, 0)
+	needle := strings.ToLower(strings.TrimSpace(role))
 	for _, node := range s.nodes {
-		if node.Role == role {
+		if needle != "" && strings.Contains(strings.ToLower(node.Role), needle) {
 			result = append(result, node)
 		}
 	}
@@ -118,8 +119,25 @@ func (s *Snapshot) FindByRole(role string) []*SnapshotNode {
 
 func (s *Snapshot) FindByName(name string) []*SnapshotNode {
 	result := make([]*SnapshotNode, 0)
+	needle := strings.ToLower(strings.TrimSpace(name))
 	for _, node := range s.nodes {
-		if node.Name == name {
+		if needle != "" && strings.Contains(strings.ToLower(node.Name), needle) {
+			result = append(result, node)
+		}
+	}
+	return result
+}
+
+func (s *Snapshot) InteractiveNodes() []*SnapshotNode {
+	result := make([]*SnapshotNode, 0)
+	for _, node := range s.nodes {
+		if node.Ref == "" {
+			continue
+		}
+		if node.Ignored {
+			continue
+		}
+		if isInteractiveSnapshotNode(node) {
 			result = append(result, node)
 		}
 	}
@@ -151,6 +169,19 @@ func (s *Snapshot) Type(ctx context.Context, ref string, text string) error {
 
 	if err := element.Type(ctx, text); err != nil {
 		return fmt.Errorf("snapshot type %q: %w", ref, err)
+	}
+
+	return nil
+}
+
+func (s *Snapshot) Fill(ctx context.Context, ref string, text string) error {
+	element, err := s.elementForRef(ctx, ref)
+	if err != nil {
+		return err
+	}
+
+	if err := element.Fill(ctx, text); err != nil {
+		return fmt.Errorf("snapshot fill %q: %w", ref, err)
 	}
 
 	return nil
@@ -208,6 +239,10 @@ func writeSnapshotNode(builder *strings.Builder, node *SnapshotNode, depth int) 
 		builder.WriteString(" = ")
 		builder.WriteString(node.Value)
 	}
+	if state := snapshotNodeState(node); state != "" {
+		builder.WriteString(" ")
+		builder.WriteString(state)
+	}
 	builder.WriteString("\n")
 
 	for _, child := range node.Children {
@@ -220,4 +255,46 @@ func axValueString(value *cdpaccessibility.AXValue) string {
 		return ""
 	}
 	return fmt.Sprint(value.Value)
+}
+
+func isInteractiveSnapshotNode(node *SnapshotNode) bool {
+	if node == nil {
+		return false
+	}
+
+	switch node.Role {
+	case "button", "link", "textbox", "searchbox", "combobox", "checkbox", "radio", "switch", "menuitem", "option", "tab", "slider", "spinbutton":
+		return true
+	}
+
+	if node.Properties["focusable"] == "true" || node.Properties["settable"] == "true" {
+		return true
+	}
+
+	return false
+}
+
+func snapshotNodeState(node *SnapshotNode) string {
+	if node == nil {
+		return ""
+	}
+
+	parts := make([]string, 0, 5)
+	for _, key := range []string{"disabled", "readonly", "required", "selected", "expanded", "checked"} {
+		value := node.Properties[key]
+		if value == "" || value == "false" {
+			continue
+		}
+		if value == "true" {
+			parts = append(parts, key)
+			continue
+		}
+		parts = append(parts, key+"="+value)
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return "[" + strings.Join(parts, ", ") + "]"
 }
