@@ -155,6 +155,30 @@ func (e *Element) Click(ctx context.Context) error {
 	return nil
 }
 
+func (e *Element) Type(ctx context.Context, text string) error {
+	if err := e.Focus(ctx); err != nil {
+		return err
+	}
+
+	if err := e.page.Keyboard().Type(ctx, text); err != nil {
+		return fmt.Errorf("type into element: %w", err)
+	}
+
+	return nil
+}
+
+func (e *Element) Press(ctx context.Context, key string) error {
+	if err := e.Focus(ctx); err != nil {
+		return err
+	}
+
+	if err := e.page.Keyboard().Press(ctx, key); err != nil {
+		return fmt.Errorf("press element key: %w", err)
+	}
+
+	return nil
+}
+
 func (e *Element) QuerySelector(ctx context.Context, selector string) (*Element, error) {
 	result, err := cdpdom.QuerySelector(e.nodeID, selector).Do(ctx, e.page.session)
 	if err != nil {

@@ -21,6 +21,7 @@ type Page struct {
 	targetID  cdptarget.TargetID
 	sessionID cdptarget.SessionID
 	session   *cdp.Session
+	keyboard  Keyboard
 
 	mu                    sync.Mutex
 	eventSeq              uint64
@@ -112,6 +113,7 @@ func (b *Browser) NewPage(ctx context.Context) (*Page, error) {
 		contextsByID:          make(map[cdpruntime.ExecutionContextID]executionContextState),
 		defaultContextByFrame: make(map[string]cdpruntime.ExecutionContextID),
 	}
+	page.keyboard = Keyboard{session: session}
 
 	page.startEventLoop()
 
