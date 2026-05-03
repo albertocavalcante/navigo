@@ -52,6 +52,6 @@ refresh-cdp-protocol:
     curl -fsSL https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/json/js_protocol.json -o tools/cdpgen/testdata/js_protocol.json
 
 gen-cdp-seed:
-    go run ./tools/cdpgen -input tools/cdpgen/testdata/browser_protocol.json,tools/cdpgen/testdata/js_protocol.json -generate-domains Browser,DOM,Target,Page,Runtime -out cdp/proto
+    go run ./tools/cdpgen -input tools/cdpgen/testdata/browser_protocol.json,tools/cdpgen/testdata/js_protocol.json -generate-domains Browser,DOM,Input,Target,Page,Runtime -out cdp/proto
 
 check: fmt-check vet lint test-race build

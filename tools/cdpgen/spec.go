@@ -150,5 +150,16 @@ func lowerFirst(value string) string {
 		prefix++
 	}
 
-	return strings.ToLower(string(runes[:prefix])) + string(runes[prefix:])
+	return avoidGoKeyword(strings.ToLower(string(runes[:prefix])) + string(runes[prefix:]))
+}
+
+func avoidGoKeyword(value string) string {
+	switch value {
+	case "break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough",
+		"for", "func", "go", "goto", "if", "import", "interface", "map", "package", "range",
+		"return", "select", "struct", "switch", "type", "var":
+		return value + "_"
+	default:
+		return value
+	}
 }

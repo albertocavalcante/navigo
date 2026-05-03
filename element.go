@@ -138,6 +138,23 @@ func (e *Element) ScrollIntoView(ctx context.Context) error {
 	return nil
 }
 
+func (e *Element) Click(ctx context.Context) error {
+	if err := e.ScrollIntoView(ctx); err != nil {
+		return err
+	}
+
+	x, y, err := clickPointForNode(ctx, e.page.session, e.nodeID)
+	if err != nil {
+		return fmt.Errorf("click element: %w", err)
+	}
+
+	if err := dispatchMouseClick(ctx, e.page.session, x, y); err != nil {
+		return fmt.Errorf("click element: %w", err)
+	}
+
+	return nil
+}
+
 func (e *Element) QuerySelector(ctx context.Context, selector string) (*Element, error) {
 	result, err := cdpdom.QuerySelector(e.nodeID, selector).Do(ctx, e.page.session)
 	if err != nil {

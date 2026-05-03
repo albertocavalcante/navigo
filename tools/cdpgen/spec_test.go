@@ -118,6 +118,8 @@ func TestLowerFirst(t *testing.T) {
 		"FrameID":            "frameID",
 		"DOMContentLoaded":   "domContentLoaded",
 		"SetLifecycleEvents": "setLifecycleEvents",
+		"Type":               "type_",
+		"Map":                "map_",
 	}
 
 	for input, want := range cases {
