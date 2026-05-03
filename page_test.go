@@ -220,6 +220,155 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		t.Fatal("timed out waiting for page.GetFrameTree()")
 	}
 
+	handleCh := make(chan *Handle, 1)
+	go func() {
+		handle, err := page.EvaluateHandle(context.Background(), "({answer: 42})")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		handleCh <- handle
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 11, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"object","className":"Object","objectId":"obj-1"}}`)
+
+	var handle *Handle
+	select {
+	case err := <-errCh:
+		t.Fatalf("page.EvaluateHandle() error = %v", err)
+	case handle = <-handleCh:
+		if got, want := handle.ObjectID(), "obj-1"; got != want {
+			t.Fatalf("handle.ObjectID() = %q, want %q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for page.EvaluateHandle()")
+	}
+
+	jsonValueCh := make(chan any, 1)
+	go func() {
+		value, err := handle.JSONValue(context.Background())
+		if err != nil {
+			errCh <- err
+			return
+		}
+		jsonValueCh <- value
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 12, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"object","value":{"answer":42}}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("handle.JSONValue() error = %v", err)
+	case value := <-jsonValueCh:
+		result, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("value type = %T, want map[string]any", value)
+		}
+		if got, want := result["answer"], float64(42); got != want {
+			t.Fatalf("value[answer] = %v, want %v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for handle.JSONValue()")
+	}
+
+	callWithHandleCh := make(chan any, 1)
+	go func() {
+		value, err := page.CallFunction(context.Background(), "function(obj) { return obj.answer; }", handle)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		callWithHandleCh <- value
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 13, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"number","value":42}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("page.CallFunction(handle) error = %v", err)
+	case value := <-callWithHandleCh:
+		number, ok := value.(float64)
+		if !ok {
+			t.Fatalf("value type = %T, want float64", value)
+		}
+		if got, want := number, 42.0; got != want {
+			t.Fatalf("value = %v, want %v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for page.CallFunction(handle)")
+	}
+
+	secondHandleCh := make(chan *Handle, 1)
+	go func() {
+		nextHandle, err := page.CallFunctionHandle(context.Background(), "function() { return ({count: 2}); }")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		secondHandleCh <- nextHandle
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 14, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"object","className":"Object","objectId":"obj-2"}}`)
+
+	var secondHandle *Handle
+	select {
+	case err := <-errCh:
+		t.Fatalf("page.CallFunctionHandle() error = %v", err)
+	case secondHandle = <-secondHandleCh:
+		if got, want := secondHandle.ObjectID(), "obj-2"; got != want {
+			t.Fatalf("secondHandle.ObjectID() = %q, want %q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for page.CallFunctionHandle()")
+	}
+
+	handleCallCh := make(chan any, 1)
+	go func() {
+		value, err := secondHandle.CallFunction(context.Background(), "function(x) { return this.count + x; }", 3)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		handleCallCh <- value
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 15, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"number","value":5}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("handle.CallFunction() error = %v", err)
+	case value := <-handleCallCh:
+		number, ok := value.(float64)
+		if !ok {
+			t.Fatalf("value type = %T, want float64", value)
+		}
+		if got, want := number, 5.0; got != want {
+			t.Fatalf("value = %v, want %v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for handle.CallFunction()")
+	}
+
+	releaseErrCh := make(chan error, 1)
+	go func() {
+		releaseErrCh <- handle.Release(context.Background())
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 16, "session-1", cdpruntime.CommandReleaseObject, `{}`)
+
+	select {
+	case err := <-releaseErrCh:
+		if err != nil {
+			t.Fatalf("handle.Release() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for handle.Release()")
+	}
+
+	if _, err := handle.JSONValue(context.Background()); err == nil {
+		t.Fatal("handle.JSONValue() after Release() error = nil, want error")
+	}
+
 	sameDocResultCh := make(chan *cdppage.NavigateResult, 1)
 	go func() {
 		result, err := page.Navigate(context.Background(), "https://example.com/#hash")
@@ -230,7 +379,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		sameDocResultCh <- result
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 11, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
+	expectMethodAndReplyWithSession(t, transport, 17, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
 
 	select {
 	case err := <-errCh:

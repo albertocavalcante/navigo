@@ -201,6 +201,19 @@ func (p *Page) Evaluate(ctx context.Context, expression string) (any, error) {
 	return decodeRemoteValue(result.Result)
 }
 
+func (p *Page) EvaluateHandle(ctx context.Context, expression string) (*Handle, error) {
+	result, err := cdpruntime.Evaluate(expression).WithAwaitPromise(true).Do(ctx, p.session)
+	if err != nil {
+		return nil, fmt.Errorf("evaluate page expression: %w", err)
+	}
+
+	if result.ExceptionDetails != nil {
+		return nil, fmt.Errorf("evaluate page expression: %s", result.ExceptionDetails.Text)
+	}
+
+	return newHandle(p, result.Result, "evaluate page expression")
+}
+
 func (p *Page) CallFunction(ctx context.Context, functionDeclaration string, args ...any) (any, error) {
 	executionContextID, err := p.mainWorldExecutionContextID()
 	if err != nil {
@@ -231,6 +244,37 @@ func (p *Page) CallFunction(ctx context.Context, functionDeclaration string, arg
 	}
 
 	return decodeRemoteValue(result.Result)
+}
+
+func (p *Page) CallFunctionHandle(ctx context.Context, functionDeclaration string, args ...any) (*Handle, error) {
+	executionContextID, err := p.mainWorldExecutionContextID()
+	if err != nil {
+		return nil, err
+	}
+
+	callArguments := make([]cdpruntime.CallArgument, 0, len(args))
+	for _, arg := range args {
+		callArgument, callErr := encodeCallArgument(arg)
+		if callErr != nil {
+			return nil, callErr
+		}
+		callArguments = append(callArguments, callArgument)
+	}
+
+	result, err := cdpruntime.CallFunctionOn(functionDeclaration).
+		WithExecutionContextID(executionContextID).
+		WithArguments(callArguments).
+		WithAwaitPromise(true).
+		Do(ctx, p.session)
+	if err != nil {
+		return nil, fmt.Errorf("call page function: %w", err)
+	}
+
+	if result.ExceptionDetails != nil {
+		return nil, fmt.Errorf("call page function: %s", result.ExceptionDetails.Text)
+	}
+
+	return newHandle(p, result.Result, "call page function")
 }
 
 func (p *Page) GetFrameTree(ctx context.Context) (*cdppage.FrameTree, error) {
@@ -683,6 +727,12 @@ func (p *Page) mainWorldExecutionContextID() (cdpruntime.ExecutionContextID, err
 
 func encodeCallArgument(value any) (cdpruntime.CallArgument, error) {
 	switch number := value.(type) {
+	case *Handle:
+		objectID, err := number.ensureUsable()
+		if err != nil {
+			return cdpruntime.CallArgument{}, fmt.Errorf("encode call argument: %w", err)
+		}
+		return cdpruntime.CallArgument{ObjectID: objectID}, nil
 	case nil:
 		return cdpruntime.CallArgument{Value: json.RawMessage("null")}, nil
 	case float64:
