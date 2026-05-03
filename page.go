@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/albertocavalcante/navigo/cdp"
+	cdpdom "github.com/albertocavalcante/navigo/cdp/proto/dom"
 	cdppage "github.com/albertocavalcante/navigo/cdp/proto/page"
 	cdpruntime "github.com/albertocavalcante/navigo/cdp/proto/runtime"
 	cdptarget "github.com/albertocavalcante/navigo/cdp/proto/target"
@@ -120,6 +121,10 @@ func (b *Browser) NewPage(ctx context.Context) (*Page, error) {
 
 	if err := cdpruntime.Enable().Do(ctx, session); err != nil {
 		return nil, fmt.Errorf("enable runtime domain: %w", err)
+	}
+
+	if err := cdpdom.Enable().Do(ctx, session); err != nil {
+		return nil, fmt.Errorf("enable DOM domain: %w", err)
 	}
 
 	if err := cdppage.SetLifecycleEventsEnabled(true).Do(ctx, session); err != nil {
@@ -288,6 +293,49 @@ func (p *Page) GetFrameTree(ctx context.Context) (*cdppage.FrameTree, error) {
 	p.mu.Unlock()
 
 	return &result.FrameTree, nil
+}
+
+func (p *Page) QuerySelector(ctx context.Context, selector string) (*Element, error) {
+	documentNodeID, err := p.documentNodeID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := cdpdom.QuerySelector(documentNodeID, selector).Do(ctx, p.session)
+	if err != nil {
+		return nil, fmt.Errorf("query selector: %w", err)
+	}
+
+	if result.NodeID == 0 {
+		return nil, nil
+	}
+
+	return p.resolveNodeIDToElement(ctx, result.NodeID)
+}
+
+func (p *Page) QuerySelectorAll(ctx context.Context, selector string) ([]*Element, error) {
+	documentNodeID, err := p.documentNodeID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := cdpdom.QuerySelectorAll(documentNodeID, selector).Do(ctx, p.session)
+	if err != nil {
+		return nil, fmt.Errorf("query selector all: %w", err)
+	}
+
+	elements := make([]*Element, 0, len(result.NodeIDs))
+	for _, nodeID := range result.NodeIDs {
+		element, resolveErr := p.resolveNodeIDToElement(ctx, nodeID)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		if element != nil {
+			elements = append(elements, element)
+		}
+	}
+
+	return elements, nil
 }
 
 func (p *Page) WaitForNavigation(ctx context.Context) error {
@@ -723,6 +771,47 @@ func (p *Page) mainWorldExecutionContextID() (cdpruntime.ExecutionContextID, err
 	}
 
 	return 0, errors.New("call page function: no main-world execution context recorded")
+}
+
+func (p *Page) documentNodeID(ctx context.Context) (cdpdom.NodeID, error) {
+	result, err := cdpdom.GetDocument().Do(ctx, p.session)
+	if err != nil {
+		return 0, fmt.Errorf("get document: %w", err)
+	}
+
+	return result.Root.NodeID, nil
+}
+
+func (p *Page) resolveNodeIDToElement(ctx context.Context, nodeID cdpdom.NodeID) (*Element, error) {
+	nodeResult, err := cdpdom.DescribeNode().WithNodeID(nodeID).Do(ctx, p.session)
+	if err != nil {
+		return nil, fmt.Errorf("describe node: %w", err)
+	}
+
+	executionContextID, err := p.mainWorldExecutionContextID()
+	if err != nil {
+		return nil, err
+	}
+
+	resolveResult, err := cdpdom.ResolveNode().
+		WithNodeID(nodeID).
+		WithExecutionContextID(int(executionContextID)).
+		Do(ctx, p.session)
+	if err != nil {
+		return nil, fmt.Errorf("resolve node: %w", err)
+	}
+
+	handle, err := newHandle(p, runtimeObjectFromDOM(resolveResult.Object), "resolve node")
+	if err != nil {
+		return nil, err
+	}
+
+	return &Element{
+		page:          p,
+		handle:        handle,
+		nodeID:        nodeResult.Node.NodeID,
+		backendNodeID: nodeResult.Node.BackendNodeID,
+	}, nil
 }
 
 func encodeCallArgument(value any) (cdpruntime.CallArgument, error) {

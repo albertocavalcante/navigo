@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/albertocavalcante/navigo/cdp"
+	cdpdom "github.com/albertocavalcante/navigo/cdp/proto/dom"
 	cdppage "github.com/albertocavalcante/navigo/cdp/proto/page"
 	cdpruntime "github.com/albertocavalcante/navigo/cdp/proto/runtime"
 	cdptarget "github.com/albertocavalcante/navigo/cdp/proto/target"
@@ -46,7 +47,8 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 	expectMethodAndReply(t, transport, 2, cdptarget.CommandAttachToTarget, `{"sessionId":"session-1"}`)
 	expectMethodAndReplyWithSession(t, transport, 3, "session-1", cdppage.CommandEnable, `{}`)
 	expectMethodAndReplyWithSession(t, transport, 4, "session-1", cdpruntime.CommandEnable, `{}`)
-	expectMethodAndReplyWithSession(t, transport, 5, "session-1", cdppage.CommandSetLifecycleEventsEnabled, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 5, "session-1", cdpdom.CommandEnable, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 6, "session-1", cdppage.CommandSetLifecycleEventsEnabled, `{}`)
 
 	var page *Page
 	select {
@@ -71,7 +73,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		navResultCh <- result
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 6, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1","loaderId":"loader-1"}`)
+	expectMethodAndReplyWithSession(t, transport, 7, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1","loaderId":"loader-1"}`)
 	transport.reads <- []byte(`{"method":"Page.frameNavigated","sessionId":"session-1","params":{"frame":{"id":"frame-1","loaderId":"loader-1","url":"https://example.com"}}}`)
 	transport.reads <- []byte(`{"method":"Runtime.executionContextCreated","sessionId":"session-1","params":{"context":{"id":7,"origin":"https://example.com","name":"","uniqueId":"ctx-1","auxData":{"frameId":"frame-1","isDefault":true}}}}`)
 
@@ -126,7 +128,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		evalValueCh <- value
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 7, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"number","value":2}}`)
+	expectMethodAndReplyWithSession(t, transport, 8, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"number","value":2}}`)
 
 	select {
 	case err := <-errCh:
@@ -153,7 +155,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		evalSpecialCh <- value
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 8, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"number","unserializableValue":"NaN"}}`)
+	expectMethodAndReplyWithSession(t, transport, 9, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"number","unserializableValue":"NaN"}}`)
 
 	select {
 	case err := <-errCh:
@@ -180,7 +182,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		callValueCh <- value
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 9, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"number","value":5}}`)
+	expectMethodAndReplyWithSession(t, transport, 10, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"number","value":5}}`)
 
 	select {
 	case err := <-errCh:
@@ -207,7 +209,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		frameTreeCh <- tree
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 10, "session-1", cdppage.CommandGetFrameTree, `{"frameTree":{"frame":{"id":"frame-1","loaderId":"loader-1","url":"https://example.com","domainAndRegistry":"example.com","securityOrigin":"https://example.com","mimeType":"text/html","secureContextType":"Secure","crossOriginIsolatedContextType":"NotIsolated","gatedAPIFeatures":[]}}}`)
+	expectMethodAndReplyWithSession(t, transport, 11, "session-1", cdppage.CommandGetFrameTree, `{"frameTree":{"frame":{"id":"frame-1","loaderId":"loader-1","url":"https://example.com","domainAndRegistry":"example.com","securityOrigin":"https://example.com","mimeType":"text/html","secureContextType":"Secure","crossOriginIsolatedContextType":"NotIsolated","gatedAPIFeatures":[]}}}`)
 
 	select {
 	case err := <-errCh:
@@ -220,6 +222,87 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		t.Fatal("timed out waiting for page.GetFrameTree()")
 	}
 
+	elementCh := make(chan *Element, 1)
+	go func() {
+		element, err := page.QuerySelector(context.Background(), "#app")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		elementCh <- element
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 12, "session-1", cdpdom.CommandGetDocument, `{"root":{"nodeId":1,"backendNodeId":1,"nodeType":9,"nodeName":"#document","localName":"","nodeValue":"","childNodeCount":1}}`)
+	expectMethodAndReplyWithSession(t, transport, 13, "session-1", cdpdom.CommandQuerySelector, `{"nodeId":2}`)
+	expectMethodAndReplyWithSession(t, transport, 14, "session-1", cdpdom.CommandDescribeNode, `{"node":{"nodeId":2,"backendNodeId":22,"nodeType":1,"nodeName":"DIV","localName":"div","nodeValue":"","childNodeCount":1,"attributes":["id","app"]}}`)
+	expectMethodAndReplyWithSession(t, transport, 15, "session-1", cdpdom.CommandResolveNode, `{"object":{"type":"object","subtype":"node","className":"HTMLDivElement","objectId":"obj-node-1","description":"div#app"}}`)
+
+	var element *Element
+	select {
+	case err := <-errCh:
+		t.Fatalf("page.QuerySelector() error = %v", err)
+	case element = <-elementCh:
+		if element == nil {
+			t.Fatal("page.QuerySelector() = nil, want element")
+		}
+		if got, want := element.NodeID(), 2; got != want {
+			t.Fatalf("element.NodeID() = %d, want %d", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for page.QuerySelector()")
+	}
+
+	outerHTMLCh := make(chan string, 1)
+	go func() {
+		outerHTML, err := element.OuterHTML(context.Background())
+		if err != nil {
+			errCh <- err
+			return
+		}
+		outerHTMLCh <- outerHTML
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 16, "session-1", cdpdom.CommandGetOuterHTML, `{"outerHTML":"<div id=\"app\"><span class=\"child\"></span></div>"}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("element.OuterHTML() error = %v", err)
+	case outerHTML := <-outerHTMLCh:
+		if got, want := outerHTML, `<div id="app"><span class="child"></span></div>`; got != want {
+			t.Fatalf("element.OuterHTML() = %q, want %q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for element.OuterHTML()")
+	}
+
+	childElementCh := make(chan *Element, 1)
+	go func() {
+		child, err := element.QuerySelector(context.Background(), ".child")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		childElementCh <- child
+	}()
+
+	expectMethodAndReplyWithSession(t, transport, 17, "session-1", cdpdom.CommandQuerySelector, `{"nodeId":3}`)
+	expectMethodAndReplyWithSession(t, transport, 18, "session-1", cdpdom.CommandDescribeNode, `{"node":{"nodeId":3,"backendNodeId":33,"nodeType":1,"nodeName":"SPAN","localName":"span","nodeValue":"","attributes":["class","child"]}}`)
+	expectMethodAndReplyWithSession(t, transport, 19, "session-1", cdpdom.CommandResolveNode, `{"object":{"type":"object","subtype":"node","className":"HTMLSpanElement","objectId":"obj-node-2","description":"span.child"}}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("element.QuerySelector() error = %v", err)
+	case child := <-childElementCh:
+		if child == nil {
+			t.Fatal("element.QuerySelector() = nil, want child element")
+		}
+		if got, want := child.BackendNodeID(), 33; got != want {
+			t.Fatalf("child.BackendNodeID() = %d, want %d", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for element.QuerySelector()")
+	}
+
 	handleCh := make(chan *Handle, 1)
 	go func() {
 		handle, err := page.EvaluateHandle(context.Background(), "({answer: 42})")
@@ -230,7 +313,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		handleCh <- handle
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 11, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"object","className":"Object","objectId":"obj-1"}}`)
+	expectMethodAndReplyWithSession(t, transport, 20, "session-1", cdpruntime.CommandEvaluate, `{"result":{"type":"object","className":"Object","objectId":"obj-1"}}`)
 
 	var handle *Handle
 	select {
@@ -254,7 +337,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		jsonValueCh <- value
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 12, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"object","value":{"answer":42}}}`)
+	expectMethodAndReplyWithSession(t, transport, 21, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"object","value":{"answer":42}}}`)
 
 	select {
 	case err := <-errCh:
@@ -281,7 +364,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		callWithHandleCh <- value
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 13, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"number","value":42}}`)
+	expectMethodAndReplyWithSession(t, transport, 22, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"number","value":42}}`)
 
 	select {
 	case err := <-errCh:
@@ -308,7 +391,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		secondHandleCh <- nextHandle
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 14, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"object","className":"Object","objectId":"obj-2"}}`)
+	expectMethodAndReplyWithSession(t, transport, 23, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"object","className":"Object","objectId":"obj-2"}}`)
 
 	var secondHandle *Handle
 	select {
@@ -332,7 +415,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		handleCallCh <- value
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 15, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"number","value":5}}`)
+	expectMethodAndReplyWithSession(t, transport, 24, "session-1", cdpruntime.CommandCallFunctionOn, `{"result":{"type":"number","value":5}}`)
 
 	select {
 	case err := <-errCh:
@@ -354,7 +437,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		releaseErrCh <- handle.Release(context.Background())
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 16, "session-1", cdpruntime.CommandReleaseObject, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 25, "session-1", cdpruntime.CommandReleaseObject, `{}`)
 
 	select {
 	case err := <-releaseErrCh:
@@ -379,7 +462,7 @@ func TestBrowserNewPageAndNavigate(t *testing.T) {
 		sameDocResultCh <- result
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 17, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
+	expectMethodAndReplyWithSession(t, transport, 26, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
 
 	select {
 	case err := <-errCh:
@@ -440,7 +523,8 @@ func TestPageGotoWaitsAtomically(t *testing.T) {
 	expectMethodAndReply(t, transport, 2, cdptarget.CommandAttachToTarget, `{"sessionId":"session-1"}`)
 	expectMethodAndReplyWithSession(t, transport, 3, "session-1", cdppage.CommandEnable, `{}`)
 	expectMethodAndReplyWithSession(t, transport, 4, "session-1", cdpruntime.CommandEnable, `{}`)
-	expectMethodAndReplyWithSession(t, transport, 5, "session-1", cdppage.CommandSetLifecycleEventsEnabled, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 5, "session-1", cdpdom.CommandEnable, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 6, "session-1", cdppage.CommandSetLifecycleEventsEnabled, `{}`)
 
 	var page *Page
 	select {
@@ -461,7 +545,7 @@ func TestPageGotoWaitsAtomically(t *testing.T) {
 		gotoResultCh <- result
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 6, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1","loaderId":"loader-1"}`)
+	expectMethodAndReplyWithSession(t, transport, 7, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1","loaderId":"loader-1"}`)
 	transport.reads <- []byte(`{"method":"Page.frameNavigated","sessionId":"session-1","params":{"frame":{"id":"frame-1","loaderId":"loader-1","url":"https://example.com"}}}`)
 	transport.reads <- []byte(`{"method":"Page.lifecycleEvent","sessionId":"session-1","params":{"frameId":"frame-1","loaderId":"loader-1","name":"load","timestamp":123.45}}`)
 
@@ -486,7 +570,7 @@ func TestPageGotoWaitsAtomically(t *testing.T) {
 		sameDocResultCh <- result
 	}()
 
-	expectMethodAndReplyWithSession(t, transport, 7, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
+	expectMethodAndReplyWithSession(t, transport, 8, "session-1", cdppage.CommandNavigate, `{"frameId":"frame-1"}`)
 	transport.reads <- []byte(`{"method":"Page.navigatedWithinDocument","sessionId":"session-1","params":{"frameId":"frame-1","url":"https://example.com/#hash"}}`)
 
 	select {

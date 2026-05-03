@@ -6,8 +6,9 @@ Current state:
 
 - Design is in [DESIGN.md](./DESIGN.md)
 - Core CDP transport/session foundation is in place
-- Browser connection, page creation, navigation, lifecycle waiting, and JS evaluation are implemented
-- Early CDP code generation exists in `tools/cdpgen`
+- Browser connection, page creation, navigation, lifecycle waiting, JS evaluation, and remote object handles are implemented
+- Early DOM selector and node-resolution APIs are implemented
+- Seed CDP code generation exists in `tools/cdpgen` for `Browser`, `DOM`, `Page`, `Runtime`, and `Target`
 
 ## Development
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	cdpdom "github.com/albertocavalcante/navigo/cdp/proto/dom"
 	cdpruntime "github.com/albertocavalcante/navigo/cdp/proto/runtime"
 )
 
@@ -48,6 +49,20 @@ func (h *Handle) Release(ctx context.Context) error {
 
 func (h *Handle) JSONValue(ctx context.Context) (any, error) {
 	return h.callFunction(ctx, "function() { return this; }", false)
+}
+
+func (h *Handle) AsElement(ctx context.Context) (*Element, error) {
+	objectID, err := h.ensureUsable()
+	if err != nil {
+		return nil, err
+	}
+
+	nodeResult, err := cdpdom.RequestNode(string(objectID)).Do(ctx, h.page.session)
+	if err != nil {
+		return nil, fmt.Errorf("resolve handle to element: %w", err)
+	}
+
+	return h.page.resolveNodeIDToElement(ctx, nodeResult.NodeID)
 }
 
 func (h *Handle) CallFunction(ctx context.Context, functionDeclaration string, args ...any) (any, error) {
@@ -131,4 +146,16 @@ func newHandle(page *Page, object cdpruntime.RemoteObject, operation string) (*H
 		page:   page,
 		object: object,
 	}, nil
+}
+
+func runtimeObjectFromDOM(object cdpdom.RemoteObject) cdpruntime.RemoteObject {
+	return cdpruntime.RemoteObject{
+		Type:                cdpruntime.RemoteObjectType(object.Type),
+		Subtype:             cdpruntime.RemoteObjectSubtype(object.Subtype),
+		ClassName:           object.ClassName,
+		Value:               object.Value,
+		UnserializableValue: cdpruntime.UnserializableValue(object.UnserializableValue),
+		Description:         object.Description,
+		ObjectID:            cdpruntime.RemoteObjectID(object.ObjectID),
+	}
 }
