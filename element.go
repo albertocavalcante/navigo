@@ -114,6 +114,68 @@ func (e *Element) InnerText(ctx context.Context) (string, error) {
 	return text, nil
 }
 
+func (e *Element) IsVisible(ctx context.Context) (bool, error) {
+	value, err := e.handle.CallFunction(ctx, `function() {
+		const style = this.ownerDocument && this.ownerDocument.defaultView ? this.ownerDocument.defaultView.getComputedStyle(this) : null;
+		if (!style) {
+			return false;
+		}
+		if (style.visibility === "hidden" || style.display === "none") {
+			return false;
+		}
+		const rect = this.getBoundingClientRect();
+		return rect.width > 0 && rect.height > 0;
+	}`)
+	if err != nil {
+		return false, fmt.Errorf("check element visibility: %w", err)
+	}
+
+	visible, ok := value.(bool)
+	if !ok {
+		return false, fmt.Errorf("check element visibility: unexpected result type %T", value)
+	}
+
+	return visible, nil
+}
+
+func (e *Element) IsEnabled(ctx context.Context) (bool, error) {
+	value, err := e.handle.CallFunction(ctx, `function() {
+		return !("disabled" in this) || this.disabled === false;
+	}`)
+	if err != nil {
+		return false, fmt.Errorf("check element enabled: %w", err)
+	}
+
+	enabled, ok := value.(bool)
+	if !ok {
+		return false, fmt.Errorf("check element enabled: unexpected result type %T", value)
+	}
+
+	return enabled, nil
+}
+
+func (e *Element) IsEditable(ctx context.Context) (bool, error) {
+	value, err := e.handle.CallFunction(ctx, `function() {
+		if (this.isContentEditable) {
+			return true;
+		}
+		if (this.ownerDocument && this.ownerDocument.activeElement === this && this.readOnly === false && "value" in this) {
+			return true;
+		}
+		return this.readOnly === false && ("value" in this || typeof this.select === "function");
+	}`)
+	if err != nil {
+		return false, fmt.Errorf("check element editable: %w", err)
+	}
+
+	editable, ok := value.(bool)
+	if !ok {
+		return false, fmt.Errorf("check element editable: unexpected result type %T", value)
+	}
+
+	return editable, nil
+}
+
 func (e *Element) SetAttribute(ctx context.Context, name string, value string) error {
 	if err := cdpdom.SetAttributeValue(e.nodeID, name, value).Do(ctx, e.page.session); err != nil {
 		return fmt.Errorf("set element attribute: %w", err)
