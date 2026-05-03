@@ -43,11 +43,17 @@ func (p *Page) Snapshot(ctx context.Context) (*Snapshot, error) {
 
 func newSnapshot(page *Page, nodes []cdpaccessibility.AXNode) *Snapshot {
 	snapshot := &Snapshot{
-		page:  page,
-		nodes: make([]*SnapshotNode, 0, len(nodes)),
-		byID:  make(map[string]*SnapshotNode, len(nodes)),
-		byRef: make(map[string]*SnapshotNode),
+		page: page,
 	}
+	snapshot.reset(nodes)
+	return snapshot
+}
+
+func (s *Snapshot) reset(nodes []cdpaccessibility.AXNode) {
+	s.nodes = make([]*SnapshotNode, 0, len(nodes))
+	s.byID = make(map[string]*SnapshotNode, len(nodes))
+	s.byRef = make(map[string]*SnapshotNode)
+	s.roots = s.roots[:0]
 
 	for _, node := range nodes {
 		snapshotNode := &SnapshotNode{
@@ -63,21 +69,21 @@ func newSnapshot(page *Page, nodes []cdpaccessibility.AXNode) *Snapshot {
 		}
 		if node.BackendDOMNodeID != 0 && !node.Ignored {
 			snapshotNode.Ref = fmt.Sprintf("r%d", node.BackendDOMNodeID)
-			snapshot.byRef[snapshotNode.Ref] = snapshotNode
+			s.byRef[snapshotNode.Ref] = snapshotNode
 		}
 		for _, property := range node.Properties {
 			snapshotNode.Properties[string(property.Name)] = axValueString(&property.Value)
 		}
-		snapshot.nodes = append(snapshot.nodes, snapshotNode)
-		snapshot.byID[snapshotNode.ID] = snapshotNode
+		s.nodes = append(s.nodes, snapshotNode)
+		s.byID[snapshotNode.ID] = snapshotNode
 	}
 
 	for _, node := range nodes {
-		parent := snapshot.byID[string(node.NodeID)]
+		parent := s.byID[string(node.NodeID)]
 		hasParent := false
 		for _, maybeParent := range nodes {
 			if slices.Contains(maybeParent.ChildIDs, node.NodeID) {
-				if parentNode := snapshot.byID[string(maybeParent.NodeID)]; parentNode != nil {
+				if parentNode := s.byID[string(maybeParent.NodeID)]; parentNode != nil {
 					parentNode.Children = append(parentNode.Children, parent)
 					hasParent = true
 					break
@@ -85,12 +91,25 @@ func newSnapshot(page *Page, nodes []cdpaccessibility.AXNode) *Snapshot {
 			}
 		}
 		if !hasParent {
-			snapshot.roots = append(snapshot.roots, parent)
+			s.roots = append(s.roots, parent)
 		}
 	}
 
-	snapshot.markdown = snapshot.renderMarkdown()
-	return snapshot
+	s.markdown = s.renderMarkdown()
+}
+
+func (s *Snapshot) Refresh(ctx context.Context) error {
+	if s.page == nil {
+		return fmt.Errorf("refresh snapshot: snapshot is not attached to a page")
+	}
+
+	result, err := cdpaccessibility.GetFullAXTree().WithDepth(-1).Do(ctx, s.page.session)
+	if err != nil {
+		return fmt.Errorf("refresh snapshot: %w", err)
+	}
+
+	s.reset(result.Nodes)
+	return nil
 }
 
 func (s *Snapshot) Nodes() []*SnapshotNode {

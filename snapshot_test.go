@@ -195,3 +195,84 @@ func TestSnapshotActions(t *testing.T) {
 		t.Fatal("timed out waiting for snapshot.Fill()")
 	}
 }
+
+func TestSnapshotRefresh(t *testing.T) {
+	t.Parallel()
+
+	transport := newFakeTransport()
+	conn := cdp.NewConn(transport)
+	go func() {
+		_ = conn.Run(context.Background())
+	}()
+
+	page := &Page{session: conn.RootSession()}
+
+	resultCh := make(chan *Snapshot, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		snapshot, err := page.Snapshot(context.Background())
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- snapshot
+	}()
+
+	expectMethodAndReply(t, transport, 1, cdpaccessibility.CommandGetFullAXTree, `{"nodes":[
+		{"nodeId":"ax-root","ignored":false,"role":{"type":"role","value":"RootWebArea"},"name":{"type":"string","value":"Before"},"childIds":["ax-button"]},
+		{"nodeId":"ax-button","ignored":false,"role":{"type":"role","value":"button"},"name":{"type":"string","value":"Old"},"backendDOMNodeId":22}
+	]}`)
+
+	var snapshot *Snapshot
+	select {
+	case err := <-errCh:
+		t.Fatalf("page.Snapshot() error = %v", err)
+	case snapshot = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for snapshot")
+	}
+
+	if got, want := snapshot.Markdown(), "- RootWebArea \"Before\"\n  - button \"Old\" [r22]"; got != want {
+		t.Fatalf("snapshot.Markdown() before refresh = %q, want %q", got, want)
+	}
+
+	refreshErrCh := make(chan error, 1)
+	go func() {
+		refreshErrCh <- snapshot.Refresh(context.Background())
+	}()
+
+	expectMethodAndReply(t, transport, 2, cdpaccessibility.CommandGetFullAXTree, `{"nodes":[
+		{"nodeId":"ax-root","ignored":false,"role":{"type":"role","value":"RootWebArea"},"name":{"type":"string","value":"After"},"childIds":["ax-textbox"]},
+		{"nodeId":"ax-textbox","ignored":false,"role":{"type":"role","value":"textbox"},"name":{"type":"string","value":"Search"},"backendDOMNodeId":44,"properties":[{"name":"readonly","value":{"type":"boolean","value":true}}]}
+	]}`)
+
+	select {
+	case err := <-refreshErrCh:
+		if err != nil {
+			t.Fatalf("snapshot.Refresh() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for snapshot.Refresh()")
+	}
+
+	if _, ok := snapshot.FindByRef("r22"); ok {
+		t.Fatal("snapshot.FindByRef(r22) ok = true after refresh, want false")
+	}
+
+	textboxes := snapshot.FindByRole("textbox")
+	if got, want := len(textboxes), 1; got != want {
+		t.Fatalf("len(snapshot.FindByRole(textbox)) = %d, want %d", got, want)
+	}
+	if got, want := textboxes[0].Ref, "r44"; got != want {
+		t.Fatalf("textboxes[0].Ref = %q, want %q", got, want)
+	}
+
+	for _, snippet := range []string{
+		`- RootWebArea "After"`,
+		`- textbox "Search" [r44] [readonly]`,
+	} {
+		if !strings.Contains(snapshot.Markdown(), snippet) {
+			t.Fatalf("snapshot.Markdown() after refresh missing %q\n%s", snippet, snapshot.Markdown())
+		}
+	}
+}
