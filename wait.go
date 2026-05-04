@@ -66,10 +66,13 @@ func (p *Page) WaitForSelector(ctx context.Context, selector string, opts ...Wai
 
 		ready, waitErr := elementMatchesWaitState(ctx, element, config.state)
 		if waitErr != nil {
-			return nil, waitErr
+			return nil, errors.Join(waitErr, releaseTransientElement(ctx, element))
 		}
 		if ready {
 			return element, nil
+		}
+		if err := releaseTransientElement(ctx, element); err != nil {
+			return nil, fmt.Errorf("wait for selector %q: %w", selector, err)
 		}
 
 		select {
@@ -110,4 +113,16 @@ func elementMatchesWaitState(ctx context.Context, element *Element, state WaitSt
 	default:
 		return false, errors.New("wait for selector: invalid wait state")
 	}
+}
+
+func releaseTransientElement(ctx context.Context, element *Element) error {
+	if element == nil {
+		return nil
+	}
+
+	if err := element.Release(ctx); err != nil {
+		return fmt.Errorf("release transient element handle: %w", err)
+	}
+
+	return nil
 }

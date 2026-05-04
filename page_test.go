@@ -867,6 +867,89 @@ func TestPageGotoWaitsAtomically(t *testing.T) {
 	}
 }
 
+func TestPageCloseDetachesAndClosesTarget(t *testing.T) {
+	t.Parallel()
+
+	transport := newFakeTransport()
+	conn := cdp.NewConn(transport)
+	browser := &Browser{
+		conn:    conn,
+		version: launcher.Version{Browser: "Chrome"},
+		cancel:  func() {},
+		done:    make(chan error, 1),
+	}
+
+	go func() {
+		browser.done <- conn.Run(context.Background())
+	}()
+
+	pageCh := make(chan *Page, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		page, err := browser.NewPage(context.Background())
+		if err != nil {
+			errCh <- err
+			return
+		}
+		pageCh <- page
+	}()
+
+	expectMethodAndReply(t, transport, 1, cdptarget.CommandCreateTarget, `{"targetId":"target-1"}`)
+	expectMethodAndReply(t, transport, 2, cdptarget.CommandAttachToTarget, `{"sessionId":"session-1"}`)
+	expectMethodAndReplyWithSession(t, transport, 3, "session-1", cdppage.CommandEnable, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 4, "session-1", cdpruntime.CommandEnable, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 5, "session-1", cdpdom.CommandEnable, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 6, "session-1", cdpaccessibility.CommandEnable, `{}`)
+	expectMethodAndReplyWithSession(t, transport, 7, "session-1", cdppage.CommandSetLifecycleEventsEnabled, `{}`)
+
+	var page *Page
+	select {
+	case err := <-errCh:
+		t.Fatalf("browser.NewPage() error = %v", err)
+	case page = <-pageCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for browser.NewPage()")
+	}
+
+	closeErrCh := make(chan error, 1)
+	go func() {
+		closeErrCh <- page.Close(context.Background())
+	}()
+
+	expectMethodAndReply(t, transport, 8, cdptarget.CommandDetachFromTarget, `{}`)
+	expectMethodAndReply(t, transport, 9, cdptarget.CommandCloseTarget, `{"success":true}`)
+
+	select {
+	case err := <-closeErrCh:
+		if err != nil {
+			t.Fatalf("page.Close() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for page.Close()")
+	}
+
+	if err := browser.Close(); err != nil {
+		t.Fatalf("browser.Close() error = %v", err)
+	}
+}
+
+func TestPageCallFunctionRejectsHandleFromDifferentSession(t *testing.T) {
+	t.Parallel()
+
+	pageA := &Page{session: &cdp.Session{}}
+	pageB := &Page{session: &cdp.Session{}}
+	handle := &Handle{
+		page: pageB,
+		object: cdpruntime.RemoteObject{
+			ObjectID: "obj-1",
+		},
+	}
+
+	if _, err := pageA.CallFunction(context.Background(), "function(obj) { return obj; }", handle); err == nil {
+		t.Fatal("page.CallFunction(handle from different session) error = nil, want error")
+	}
+}
+
 func isNaN(value float64) bool {
 	return math.IsNaN(value)
 }

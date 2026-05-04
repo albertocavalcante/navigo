@@ -24,7 +24,11 @@ type Page struct {
 	session   *cdp.Session
 	keyboard  Keyboard
 
+	closeOnce sync.Once
+	closeErr  error
+
 	mu                    sync.Mutex
+	closed                bool
 	eventSeq              uint64
 	lastNavigation        navigationRecord
 	lifecycleByLoader     map[string]map[cdppage.LifecycleEventName]uint64
@@ -37,6 +41,8 @@ type Page struct {
 	nextWaiterID          int
 	axWatchers            map[int]*axWatcher
 	nextAXWatcherID       int
+	eventCancel           func()
+	eventDone             chan struct{}
 }
 
 type axWatcher struct {
@@ -121,6 +127,7 @@ func (b *Browser) NewPage(ctx context.Context) (*Page, error) {
 		contextsByID:          make(map[cdpruntime.ExecutionContextID]executionContextState),
 		defaultContextByFrame: make(map[string]cdpruntime.ExecutionContextID),
 		axWatchers:            make(map[int]*axWatcher),
+		eventDone:             make(chan struct{}),
 	}
 	page.keyboard = Keyboard{session: session}
 
@@ -155,6 +162,58 @@ func (p *Page) TargetID() string {
 
 func (p *Page) SessionID() string {
 	return string(p.sessionID)
+}
+
+func (p *Page) Close(ctx context.Context) error {
+	p.closeOnce.Do(func() {
+		p.mu.Lock()
+		p.closed = true
+		cancel := p.eventCancel
+		done := p.eventDone
+		p.mu.Unlock()
+
+		if cancel != nil {
+			cancel()
+		}
+		if done != nil {
+			<-done
+		}
+
+		p.failWaiters(errors.New("page closed"))
+		p.closeAXWatchers()
+
+		if p.browser == nil || p.browser.conn == nil {
+			return
+		}
+
+		root := p.browser.conn.RootSession()
+		if p.sessionID != "" {
+			if err := cdptarget.DetachFromTarget().WithSessionID(p.sessionID).Do(ctx, root); err != nil {
+				p.closeErr = fmt.Errorf("close page: detach target session: %w", err)
+				return
+			}
+		}
+
+		if p.targetID != "" {
+			result, err := cdptarget.CloseTarget(p.targetID).Do(ctx, root)
+			if err != nil {
+				p.closeErr = fmt.Errorf("close page: close target: %w", err)
+				return
+			}
+			if result != nil && !result.Success {
+				p.closeErr = errors.New("close page: target close unsuccessful")
+			}
+		}
+	})
+
+	return p.closeErr
+}
+
+func (p *Page) isClosed() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.closed
 }
 
 func (p *Page) Navigate(ctx context.Context, url string) (*cdppage.NavigateResult, error) {
@@ -242,7 +301,7 @@ func (p *Page) CallFunction(ctx context.Context, functionDeclaration string, arg
 
 	callArguments := make([]cdpruntime.CallArgument, 0, len(args))
 	for _, arg := range args {
-		callArgument, callErr := encodeCallArgument(arg)
+		callArgument, callErr := encodeCallArgument(p, arg)
 		if callErr != nil {
 			return nil, callErr
 		}
@@ -274,7 +333,7 @@ func (p *Page) CallFunctionHandle(ctx context.Context, functionDeclaration strin
 
 	callArguments := make([]cdpruntime.CallArgument, 0, len(args))
 	for _, arg := range args {
-		callArgument, callErr := encodeCallArgument(arg)
+		callArgument, callErr := encodeCallArgument(p, arg)
 		if callErr != nil {
 			return nil, callErr
 		}
@@ -369,9 +428,16 @@ func (p *Page) WaitForNavigationUntil(ctx context.Context, until WaitUntil) erro
 
 func (p *Page) startEventLoop() {
 	events, cancel := p.session.Subscribe(32)
-	_ = cancel
+	p.mu.Lock()
+	if p.eventDone == nil {
+		p.eventDone = make(chan struct{})
+	}
+	p.eventCancel = cancel
+	done := p.eventDone
+	p.mu.Unlock()
 
 	go func() {
+		defer close(done)
 		for event := range events {
 			switch event.Method {
 			case cdppage.EventLifecycleEvent:
@@ -694,6 +760,21 @@ func (p *Page) notifyAXWatchers() {
 	}
 }
 
+func (p *Page) closeAXWatchers() {
+	p.mu.Lock()
+	watchers := make([]*axWatcher, 0, len(p.axWatchers))
+	for id, watcher := range p.axWatchers {
+		delete(p.axWatchers, id)
+		watchers = append(watchers, watcher)
+	}
+	p.mu.Unlock()
+
+	for _, watcher := range watchers {
+		close(watcher.done)
+		close(watcher.ch)
+	}
+}
+
 func (p *Page) ensureFrameStateLocked(frameID string) *frameState {
 	if p.frameStates[frameID] == nil {
 		p.frameStates[frameID] = &frameState{}
@@ -919,9 +1000,12 @@ func (p *Page) resolveBackendNodeIDToElement(ctx context.Context, backendNodeID 
 	}, nil
 }
 
-func encodeCallArgument(value any) (cdpruntime.CallArgument, error) {
+func encodeCallArgument(page *Page, value any) (cdpruntime.CallArgument, error) {
 	switch number := value.(type) {
 	case *Handle:
+		if page != nil && number.page != nil && number.page.session != page.session {
+			return cdpruntime.CallArgument{}, errors.New("encode call argument: handle belongs to a different page session")
+		}
 		objectID, err := number.ensureUsable()
 		if err != nil {
 			return cdpruntime.CallArgument{}, fmt.Errorf("encode call argument: %w", err)

@@ -91,7 +91,7 @@ func (h *Handle) callFunction(ctx context.Context, functionDeclaration string, w
 
 	callArguments := make([]cdpruntime.CallArgument, 0, len(args))
 	for _, arg := range args {
-		callArgument, callErr := encodeCallArgument(arg)
+		callArgument, callErr := encodeCallArgument(h.page, arg)
 		if callErr != nil {
 			return nil, callErr
 		}

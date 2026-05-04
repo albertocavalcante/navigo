@@ -100,6 +100,53 @@ func TestPageWaitForSelectorHidden(t *testing.T) {
 	}
 }
 
+func TestPageWaitForSelectorReleasesTransientHandles(t *testing.T) {
+	t.Parallel()
+
+	transport := newFakeTransport()
+	conn := cdp.NewConn(transport)
+	go func() {
+		_ = conn.Run(context.Background())
+	}()
+
+	page := &Page{
+		session:               conn.RootSession(),
+		defaultContextByFrame: map[string]cdpruntime.ExecutionContextID{"frame-1": 7},
+		mainFrameID:           "frame-1",
+	}
+
+	resultCh := make(chan *Element, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		element, err := page.WaitForSelector(context.Background(), "#app", WithWaitState(WaitStateHidden), WithPollInterval(time.Millisecond))
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- element
+	}()
+
+	expectMethodAndReply(t, transport, 1, cdpdom.CommandGetDocument, `{"root":{"nodeId":1,"backendNodeId":1,"nodeType":9,"nodeName":"#document","localName":"","nodeValue":""}}`)
+	expectMethodAndReply(t, transport, 2, cdpdom.CommandQuerySelector, `{"nodeId":2}`)
+	expectMethodAndReply(t, transport, 3, cdpdom.CommandDescribeNode, `{"node":{"nodeId":2,"backendNodeId":22,"nodeType":1,"nodeName":"DIV","localName":"div","nodeValue":""}}`)
+	expectMethodAndReply(t, transport, 4, cdpdom.CommandResolveNode, `{"object":{"type":"object","subtype":"node","className":"HTMLDivElement","objectId":"obj-node-1"}}`)
+	expectMethodAndReply(t, transport, 5, cdpruntime.CommandCallFunctionOn, `{"result":{"type":"boolean","value":true}}`)
+	expectMethodAndReply(t, transport, 6, cdpruntime.CommandReleaseObject, `{}`)
+	expectMethodAndReply(t, transport, 7, cdpdom.CommandGetDocument, `{"root":{"nodeId":1,"backendNodeId":1,"nodeType":9,"nodeName":"#document","localName":"","nodeValue":""}}`)
+	expectMethodAndReply(t, transport, 8, cdpdom.CommandQuerySelector, `{"nodeId":0}`)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("page.WaitForSelector(hidden) error = %v", err)
+	case element := <-resultCh:
+		if element != nil {
+			t.Fatalf("page.WaitForSelector(hidden) = %#v, want nil", element)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for page.WaitForSelector(hidden)")
+	}
+}
+
 func TestElementStateHelpers(t *testing.T) {
 	t.Parallel()
 

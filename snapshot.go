@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
 	cdpaccessibility "github.com/albertocavalcante/navigo/cdp/proto/accessibility"
 )
@@ -16,9 +17,11 @@ type Snapshot struct {
 	byRef    map[string]*SnapshotNode
 	roots    []*SnapshotNode
 	markdown string
-	updates  <-chan struct{}
-	closed   chan struct{}
-	cancel   func()
+
+	mu      sync.Mutex
+	updates <-chan struct{}
+	closed  chan struct{}
+	cancel  func()
 }
 
 type SnapshotNode struct {
@@ -48,9 +51,6 @@ func newSnapshot(page *Page, nodes []cdpaccessibility.AXNode) *Snapshot {
 	snapshot := &Snapshot{
 		page:   page,
 		closed: make(chan struct{}),
-	}
-	if page != nil {
-		snapshot.updates, snapshot.cancel = page.subscribeAXUpdates()
 	}
 	snapshot.reset(nodes)
 	return snapshot
@@ -120,8 +120,9 @@ func (s *Snapshot) Refresh(ctx context.Context) error {
 }
 
 func (s *Snapshot) WaitForUpdate(ctx context.Context) error {
-	if s.updates == nil {
-		return fmt.Errorf("wait for snapshot update: snapshot is not attached to page updates")
+	updates, err := s.ensureUpdateSubscription()
+	if err != nil {
+		return err
 	}
 
 	select {
@@ -129,7 +130,7 @@ func (s *Snapshot) WaitForUpdate(ctx context.Context) error {
 		return fmt.Errorf("wait for snapshot update: %w", ctx.Err())
 	case <-s.closed:
 		return fmt.Errorf("wait for snapshot update: snapshot closed")
-	case _, ok := <-s.updates:
+	case _, ok := <-updates:
 		if !ok {
 			return fmt.Errorf("wait for snapshot update: update stream closed")
 		}
@@ -143,16 +144,45 @@ func (s *Snapshot) WaitForUpdate(ctx context.Context) error {
 }
 
 func (s *Snapshot) Close() {
+	s.mu.Lock()
 	select {
 	case <-s.closed:
 	default:
 		close(s.closed)
 	}
 
-	if s.cancel != nil {
-		s.cancel()
-		s.cancel = nil
+	cancel := s.cancel
+	s.cancel = nil
+	s.updates = nil
+	s.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
 	}
+}
+
+func (s *Snapshot) ensureUpdateSubscription() (<-chan struct{}, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	select {
+	case <-s.closed:
+		return nil, fmt.Errorf("wait for snapshot update: snapshot closed")
+	default:
+	}
+
+	if s.updates != nil {
+		return s.updates, nil
+	}
+	if s.page == nil {
+		return nil, fmt.Errorf("wait for snapshot update: snapshot is not attached to page updates")
+	}
+	if s.page.isClosed() {
+		return nil, fmt.Errorf("wait for snapshot update: page closed")
+	}
+
+	s.updates, s.cancel = s.page.subscribeAXUpdates()
+	return s.updates, nil
 }
 
 func (s *Snapshot) Nodes() []*SnapshotNode {

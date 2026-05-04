@@ -44,6 +44,9 @@ func TestPageSnapshot(t *testing.T) {
 	case err := <-errCh:
 		t.Fatalf("page.Snapshot() error = %v", err)
 	case snapshot := <-resultCh:
+		if got, want := len(page.axWatchers), 0; got != want {
+			t.Fatalf("len(page.axWatchers) after Snapshot() = %d, want %d", got, want)
+		}
 		if got, want := len(snapshot.Nodes()), 2; got != want {
 			t.Fatalf("len(snapshot.Nodes()) = %d, want %d", got, want)
 		}
@@ -316,6 +319,13 @@ func TestSnapshotWaitForUpdate(t *testing.T) {
 		t.Fatal("timed out waiting for snapshot")
 	}
 
+	if _, err := snapshot.ensureUpdateSubscription(); err != nil {
+		t.Fatalf("snapshot.ensureUpdateSubscription() error = %v", err)
+	}
+	if got, want := len(page.axWatchers), 1; got != want {
+		t.Fatalf("len(page.axWatchers) after ensureUpdateSubscription() = %d, want %d", got, want)
+	}
+
 	waitErrCh := make(chan error, 1)
 	go func() {
 		waitErrCh <- snapshot.WaitForUpdate(context.Background())
@@ -340,4 +350,7 @@ func TestSnapshotWaitForUpdate(t *testing.T) {
 	}
 
 	snapshot.Close()
+	if got, want := len(page.axWatchers), 0; got != want {
+		t.Fatalf("len(page.axWatchers) after Snapshot.Close() = %d, want %d", got, want)
+	}
 }
