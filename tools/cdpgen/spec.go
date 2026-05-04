@@ -153,6 +153,10 @@ func lowerFirst(value string) string {
 	return avoidGoKeyword(strings.ToLower(string(runes[:prefix])) + string(runes[prefix:]))
 }
 
+func packageNameForDomain(value string) string {
+	return avoidGoKeyword(strings.ToLower(value))
+}
+
 func avoidGoKeyword(value string) string {
 	switch value {
 	case "break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough",

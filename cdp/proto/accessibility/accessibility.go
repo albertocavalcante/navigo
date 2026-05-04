@@ -138,29 +138,33 @@ const (
 )
 
 type AXNodeID string
+type BackendNodeID int
+type FrameID string
+type NodeID int
+type RemoteObjectID string
 type AXNode struct {
-	NodeID           AXNodeID     `json:"nodeId"`
-	Ignored          bool         `json:"ignored"`
-	IgnoredReasons   []AXProperty `json:"ignoredReasons,omitempty"`
-	Role             *AXValue     `json:"role,omitempty"`
-	ChromeRole       *AXValue     `json:"chromeRole,omitempty"`
-	Name             *AXValue     `json:"name,omitempty"`
-	Description      *AXValue     `json:"description,omitempty"`
-	Value            *AXValue     `json:"value,omitempty"`
-	Properties       []AXProperty `json:"properties,omitempty"`
-	ParentID         AXNodeID     `json:"parentId,omitempty"`
-	ChildIDs         []AXNodeID   `json:"childIds,omitempty"`
-	BackendDOMNodeID int          `json:"backendDOMNodeId,omitempty"`
-	FrameID          string       `json:"frameId,omitempty"`
+	NodeID           AXNodeID      `json:"nodeId"`
+	Ignored          bool          `json:"ignored"`
+	IgnoredReasons   []AXProperty  `json:"ignoredReasons,omitempty"`
+	Role             *AXValue      `json:"role,omitempty"`
+	ChromeRole       *AXValue      `json:"chromeRole,omitempty"`
+	Name             *AXValue      `json:"name,omitempty"`
+	Description      *AXValue      `json:"description,omitempty"`
+	Value            *AXValue      `json:"value,omitempty"`
+	Properties       []AXProperty  `json:"properties,omitempty"`
+	ParentID         AXNodeID      `json:"parentId,omitempty"`
+	ChildIDs         []AXNodeID    `json:"childIds,omitempty"`
+	BackendDOMNodeID BackendNodeID `json:"backendDOMNodeId,omitempty"`
+	FrameID          FrameID       `json:"frameId,omitempty"`
 }
 type AXProperty struct {
 	Name  AXPropertyName `json:"name"`
 	Value AXValue        `json:"value"`
 }
 type AXRelatedNode struct {
-	BackendDOMNodeID int    `json:"backendDOMNodeId"`
-	IDref            string `json:"idref,omitempty"`
-	Text             string `json:"text,omitempty"`
+	BackendDOMNodeID BackendNodeID `json:"backendDOMNodeId"`
+	IDref            string        `json:"idref,omitempty"`
+	Text             string        `json:"text,omitempty"`
 }
 type AXValue struct {
 	Type         AXValueType     `json:"type"`
@@ -216,10 +220,10 @@ func (p *EnableParams) Do(ctx context.Context, caller Caller) error {
 }
 
 type GetPartialAXTreeParams struct {
-	NodeID         int    `json:"nodeId,omitempty"`
-	BackendNodeID  int    `json:"backendNodeId,omitempty"`
-	ObjectID       string `json:"objectId,omitempty"`
-	FetchRelatives bool   `json:"fetchRelatives,omitempty"`
+	NodeID         NodeID         `json:"nodeId,omitempty"`
+	BackendNodeID  BackendNodeID  `json:"backendNodeId,omitempty"`
+	ObjectID       RemoteObjectID `json:"objectId,omitempty"`
+	FetchRelatives bool           `json:"fetchRelatives,omitempty"`
 }
 type GetPartialAXTreeResult struct {
 	Nodes []AXNode `json:"nodes"`
@@ -228,15 +232,15 @@ type GetPartialAXTreeResult struct {
 func GetPartialAXTree() *GetPartialAXTreeParams {
 	return &GetPartialAXTreeParams{}
 }
-func (p GetPartialAXTreeParams) WithNodeID(nodeID int) *GetPartialAXTreeParams {
+func (p GetPartialAXTreeParams) WithNodeID(nodeID NodeID) *GetPartialAXTreeParams {
 	p.NodeID = nodeID
 	return &p
 }
-func (p GetPartialAXTreeParams) WithBackendNodeID(backendNodeID int) *GetPartialAXTreeParams {
+func (p GetPartialAXTreeParams) WithBackendNodeID(backendNodeID BackendNodeID) *GetPartialAXTreeParams {
 	p.BackendNodeID = backendNodeID
 	return &p
 }
-func (p GetPartialAXTreeParams) WithObjectID(objectID string) *GetPartialAXTreeParams {
+func (p GetPartialAXTreeParams) WithObjectID(objectID RemoteObjectID) *GetPartialAXTreeParams {
 	p.ObjectID = objectID
 	return &p
 }
@@ -258,8 +262,8 @@ func (p *GetPartialAXTreeParams) Do(ctx context.Context, caller Caller) (*GetPar
 }
 
 type GetFullAXTreeParams struct {
-	Depth   int    `json:"depth,omitempty"`
-	FrameID string `json:"frameId,omitempty"`
+	Depth   int     `json:"depth,omitempty"`
+	FrameID FrameID `json:"frameId,omitempty"`
 }
 type GetFullAXTreeResult struct {
 	Nodes []AXNode `json:"nodes"`
@@ -272,7 +276,7 @@ func (p GetFullAXTreeParams) WithDepth(depth int) *GetFullAXTreeParams {
 	p.Depth = depth
 	return &p
 }
-func (p GetFullAXTreeParams) WithFrameID(frameID string) *GetFullAXTreeParams {
+func (p GetFullAXTreeParams) WithFrameID(frameID FrameID) *GetFullAXTreeParams {
 	p.FrameID = frameID
 	return &p
 }
@@ -290,7 +294,7 @@ func (p *GetFullAXTreeParams) Do(ctx context.Context, caller Caller) (*GetFullAX
 }
 
 type GetRootAXNodeParams struct {
-	FrameID string `json:"frameId,omitempty"`
+	FrameID FrameID `json:"frameId,omitempty"`
 }
 type GetRootAXNodeResult struct {
 	Node AXNode `json:"node"`
@@ -299,7 +303,7 @@ type GetRootAXNodeResult struct {
 func GetRootAXNode() *GetRootAXNodeParams {
 	return &GetRootAXNodeParams{}
 }
-func (p GetRootAXNodeParams) WithFrameID(frameID string) *GetRootAXNodeParams {
+func (p GetRootAXNodeParams) WithFrameID(frameID FrameID) *GetRootAXNodeParams {
 	p.FrameID = frameID
 	return &p
 }
@@ -317,9 +321,9 @@ func (p *GetRootAXNodeParams) Do(ctx context.Context, caller Caller) (*GetRootAX
 }
 
 type GetAXNodeAndAncestorsParams struct {
-	NodeID        int    `json:"nodeId,omitempty"`
-	BackendNodeID int    `json:"backendNodeId,omitempty"`
-	ObjectID      string `json:"objectId,omitempty"`
+	NodeID        NodeID         `json:"nodeId,omitempty"`
+	BackendNodeID BackendNodeID  `json:"backendNodeId,omitempty"`
+	ObjectID      RemoteObjectID `json:"objectId,omitempty"`
 }
 type GetAXNodeAndAncestorsResult struct {
 	Nodes []AXNode `json:"nodes"`
@@ -328,15 +332,15 @@ type GetAXNodeAndAncestorsResult struct {
 func GetAXNodeAndAncestors() *GetAXNodeAndAncestorsParams {
 	return &GetAXNodeAndAncestorsParams{}
 }
-func (p GetAXNodeAndAncestorsParams) WithNodeID(nodeID int) *GetAXNodeAndAncestorsParams {
+func (p GetAXNodeAndAncestorsParams) WithNodeID(nodeID NodeID) *GetAXNodeAndAncestorsParams {
 	p.NodeID = nodeID
 	return &p
 }
-func (p GetAXNodeAndAncestorsParams) WithBackendNodeID(backendNodeID int) *GetAXNodeAndAncestorsParams {
+func (p GetAXNodeAndAncestorsParams) WithBackendNodeID(backendNodeID BackendNodeID) *GetAXNodeAndAncestorsParams {
 	p.BackendNodeID = backendNodeID
 	return &p
 }
-func (p GetAXNodeAndAncestorsParams) WithObjectID(objectID string) *GetAXNodeAndAncestorsParams {
+func (p GetAXNodeAndAncestorsParams) WithObjectID(objectID RemoteObjectID) *GetAXNodeAndAncestorsParams {
 	p.ObjectID = objectID
 	return &p
 }
@@ -355,7 +359,7 @@ func (p *GetAXNodeAndAncestorsParams) Do(ctx context.Context, caller Caller) (*G
 
 type GetChildAXNodesParams struct {
 	ID      AXNodeID `json:"id"`
-	FrameID string   `json:"frameId,omitempty"`
+	FrameID FrameID  `json:"frameId,omitempty"`
 }
 type GetChildAXNodesResult struct {
 	Nodes []AXNode `json:"nodes"`
@@ -364,7 +368,7 @@ type GetChildAXNodesResult struct {
 func GetChildAXNodes(id AXNodeID) *GetChildAXNodesParams {
 	return &GetChildAXNodesParams{ID: id}
 }
-func (p GetChildAXNodesParams) WithFrameID(frameID string) *GetChildAXNodesParams {
+func (p GetChildAXNodesParams) WithFrameID(frameID FrameID) *GetChildAXNodesParams {
 	p.FrameID = frameID
 	return &p
 }
@@ -382,11 +386,11 @@ func (p *GetChildAXNodesParams) Do(ctx context.Context, caller Caller) (*GetChil
 }
 
 type QueryAXTreeParams struct {
-	NodeID         int    `json:"nodeId,omitempty"`
-	BackendNodeID  int    `json:"backendNodeId,omitempty"`
-	ObjectID       string `json:"objectId,omitempty"`
-	AccessibleName string `json:"accessibleName,omitempty"`
-	Role           string `json:"role,omitempty"`
+	NodeID         NodeID         `json:"nodeId,omitempty"`
+	BackendNodeID  BackendNodeID  `json:"backendNodeId,omitempty"`
+	ObjectID       RemoteObjectID `json:"objectId,omitempty"`
+	AccessibleName string         `json:"accessibleName,omitempty"`
+	Role           string         `json:"role,omitempty"`
 }
 type QueryAXTreeResult struct {
 	Nodes []AXNode `json:"nodes"`
@@ -395,15 +399,15 @@ type QueryAXTreeResult struct {
 func QueryAXTree() *QueryAXTreeParams {
 	return &QueryAXTreeParams{}
 }
-func (p QueryAXTreeParams) WithNodeID(nodeID int) *QueryAXTreeParams {
+func (p QueryAXTreeParams) WithNodeID(nodeID NodeID) *QueryAXTreeParams {
 	p.NodeID = nodeID
 	return &p
 }
-func (p QueryAXTreeParams) WithBackendNodeID(backendNodeID int) *QueryAXTreeParams {
+func (p QueryAXTreeParams) WithBackendNodeID(backendNodeID BackendNodeID) *QueryAXTreeParams {
 	p.BackendNodeID = backendNodeID
 	return &p
 }
-func (p QueryAXTreeParams) WithObjectID(objectID string) *QueryAXTreeParams {
+func (p QueryAXTreeParams) WithObjectID(objectID RemoteObjectID) *QueryAXTreeParams {
 	p.ObjectID = objectID
 	return &p
 }

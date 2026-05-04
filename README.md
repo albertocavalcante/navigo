@@ -8,7 +8,7 @@ Current state:
 - Core CDP transport/session foundation is in place
 - Browser connection, page creation, navigation, lifecycle waiting, JS evaluation, and remote object handles are implemented
 - Early DOM selector, node-resolution, and element helper APIs are implemented
-- Seed CDP code generation exists in `tools/cdpgen` for `Accessibility`, `Browser`, `DOM`, `Input`, `Page`, `Runtime`, and `Target`
+- Seed CDP code generation exists in `tools/cdpgen` for `Accessibility`, `Browser`, `CSS`, `DOM`, `DOMSnapshot`, `Emulation`, `Fetch`, `IO`, `Input`, `Log`, `Network`, `Overlay`, `Page`, `Performance`, `Runtime`, `Security`, `Storage`, and `Target`
 
 ## Development
 

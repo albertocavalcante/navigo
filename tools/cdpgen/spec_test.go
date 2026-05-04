@@ -129,6 +129,24 @@ func TestLowerFirst(t *testing.T) {
 	}
 }
 
+func TestPackageNameForDomain(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"DOM":         "dom",
+		"DOMSnapshot": "domsnapshot",
+		"IO":          "io",
+		"CSS":         "css",
+		"Type":        "type_",
+	}
+
+	for input, want := range cases {
+		if got := packageNameForDomain(input); got != want {
+			t.Fatalf("packageNameForDomain(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestSplitCSV(t *testing.T) {
 	t.Parallel()
 

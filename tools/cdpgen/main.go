@@ -90,12 +90,12 @@ func writeDomainPackage(outputDir string, domain domainSpec, typeIndex map[strin
 		return err
 	}
 
-	packageDir := filepath.Join(outputDir, lowerFirst(domain.Domain))
+	packageDir := filepath.Join(outputDir, packageNameForDomain(domain.Domain))
 	if err := os.MkdirAll(packageDir, 0o755); err != nil {
 		return fmt.Errorf("create package dir %q: %w", packageDir, err)
 	}
 
-	outputPath := filepath.Join(packageDir, lowerFirst(domain.Domain)+".go")
+	outputPath := filepath.Join(packageDir, packageNameForDomain(domain.Domain)+".go")
 	if err := os.WriteFile(outputPath, rendered, 0o644); err != nil {
 		return fmt.Errorf("write generated package %q: %w", outputPath, err)
 	}

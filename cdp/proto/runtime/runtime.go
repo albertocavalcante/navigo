@@ -253,7 +253,7 @@ type DeepSerializedValue struct {
 }
 type EntryPreview struct {
 	Key   *ObjectPreview `json:"key,omitempty"`
-	Value ObjectPreview  `json:"value"`
+	Value *ObjectPreview `json:"value"`
 }
 type ExceptionDetails struct {
 	ExceptionID        int                `json:"exceptionId"`

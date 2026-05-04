@@ -573,6 +573,30 @@ const (
 	ReferrerPolicyUnsafeURL                   ReferrerPolicy = "unsafeUrl"
 )
 
+type ResourceType string
+
+const (
+	ResourceTypeDocument           ResourceType = "Document"
+	ResourceTypeStylesheet         ResourceType = "Stylesheet"
+	ResourceTypeImage              ResourceType = "Image"
+	ResourceTypeMedia              ResourceType = "Media"
+	ResourceTypeFont               ResourceType = "Font"
+	ResourceTypeScript             ResourceType = "Script"
+	ResourceTypeTextTrack          ResourceType = "TextTrack"
+	ResourceTypeXHR                ResourceType = "XHR"
+	ResourceTypeFetch              ResourceType = "Fetch"
+	ResourceTypePrefetch           ResourceType = "Prefetch"
+	ResourceTypeEventSource        ResourceType = "EventSource"
+	ResourceTypeWebSocket          ResourceType = "WebSocket"
+	ResourceTypeManifest           ResourceType = "Manifest"
+	ResourceTypeSignedExchange     ResourceType = "SignedExchange"
+	ResourceTypePing               ResourceType = "Ping"
+	ResourceTypeCSPViolationReport ResourceType = "CSPViolationReport"
+	ResourceTypePreflight          ResourceType = "Preflight"
+	ResourceTypeFedCM              ResourceType = "FedCM"
+	ResourceTypeOther              ResourceType = "Other"
+)
+
 type ScreenOrientationType string
 
 const (
@@ -658,7 +682,13 @@ const (
 
 type FrameID string
 type ScriptIDentifier string
+type BackendNodeID int
+type ExecutionContextID int
+type LoaderID string
+type MonotonicTime float64
 type ScriptID string
+type StreamHandle string
+type TimeSinceEpoch float64
 type UniqueDebuggerID string
 type AdFrameStatus struct {
 	AdFrameType  AdFrameType          `json:"adFrameType"`
@@ -721,7 +751,7 @@ type FontSizes struct {
 type Frame struct {
 	ID                             FrameID                        `json:"id"`
 	ParentID                       FrameID                        `json:"parentId,omitempty"`
-	LoaderID                       string                         `json:"loaderId"`
+	LoaderID                       LoaderID                       `json:"loaderId"`
 	Name                           string                         `json:"name,omitempty"`
 	URL                            string                         `json:"url"`
 	URLFragment                    string                         `json:"urlFragment,omitempty"`
@@ -736,13 +766,13 @@ type Frame struct {
 	GatedAPIFeatures               []GatedAPIFeatures             `json:"gatedAPIFeatures"`
 }
 type FrameResource struct {
-	URL          string  `json:"url"`
-	Type         string  `json:"type"`
-	MimeType     string  `json:"mimeType"`
-	LastModified float64 `json:"lastModified,omitempty"`
-	ContentSize  float64 `json:"contentSize,omitempty"`
-	Failed       bool    `json:"failed,omitempty"`
-	Canceled     bool    `json:"canceled,omitempty"`
+	URL          string         `json:"url"`
+	Type         ResourceType   `json:"type"`
+	MimeType     string         `json:"mimeType"`
+	LastModified TimeSinceEpoch `json:"lastModified,omitempty"`
+	ContentSize  float64        `json:"contentSize,omitempty"`
+	Failed       bool           `json:"failed,omitempty"`
+	Canceled     bool           `json:"canceled,omitempty"`
 }
 type FrameResourceTree struct {
 	Frame       Frame               `json:"frame"`
@@ -791,7 +821,7 @@ type OriginTrialToken struct {
 	Origin           string                      `json:"origin"`
 	MatchSubDOMains  bool                        `json:"matchSubDomains"`
 	TrialName        string                      `json:"trialName"`
-	ExpiryTime       float64                     `json:"expiryTime"`
+	ExpiryTime       TimeSinceEpoch              `json:"expiryTime"`
 	IsThirdParty     bool                        `json:"isThirdParty"`
 	UsageRestriction OriginTrialUsageRestriction `json:"usageRestriction"`
 }
@@ -822,13 +852,13 @@ type ScopeExtension struct {
 	HasOriginWildcard bool   `json:"hasOriginWildcard"`
 }
 type ScreencastFrameMetadata struct {
-	OffsetTop       float64 `json:"offsetTop"`
-	PageScaleFactor float64 `json:"pageScaleFactor"`
-	DeviceWidth     float64 `json:"deviceWidth"`
-	DeviceHeight    float64 `json:"deviceHeight"`
-	ScrollOffsetX   float64 `json:"scrollOffsetX"`
-	ScrollOffsetY   float64 `json:"scrollOffsetY"`
-	Timestamp       float64 `json:"timestamp,omitempty"`
+	OffsetTop       float64        `json:"offsetTop"`
+	PageScaleFactor float64        `json:"pageScaleFactor"`
+	DeviceWidth     float64        `json:"deviceWidth"`
+	DeviceHeight    float64        `json:"deviceHeight"`
+	ScrollOffsetX   float64        `json:"scrollOffsetX"`
+	ScrollOffsetY   float64        `json:"scrollOffsetY"`
+	Timestamp       TimeSinceEpoch `json:"timestamp,omitempty"`
 }
 type Screenshot struct {
 	Image      ImageResource `json:"image"`
@@ -902,9 +932,9 @@ type AdAncestry struct {
 	RootScriptFilterlistRule string               `json:"rootScriptFilterlistRule,omitempty"`
 }
 type AdScriptIDentifier struct {
-	ScriptID   string `json:"scriptId"`
-	DebuggerID string `json:"debuggerId"`
-	Name       string `json:"name"`
+	ScriptID   ScriptID         `json:"scriptId"`
+	DebuggerID UniqueDebuggerID `json:"debuggerId"`
+	Name       string           `json:"name"`
 }
 type CallFrame struct {
 	FunctionName string   `json:"functionName"`
@@ -1155,7 +1185,7 @@ type CreateIsolatedWorldParams struct {
 	GrantUniveralAccess bool    `json:"grantUniveralAccess,omitempty"`
 }
 type CreateIsolatedWorldResult struct {
-	ExecutionContextID int `json:"executionContextId"`
+	ExecutionContextID ExecutionContextID `json:"executionContextId"`
 }
 
 func CreateIsolatedWorld(frameID FrameID) *CreateIsolatedWorldParams {
@@ -1533,10 +1563,10 @@ type NavigateParams struct {
 	ReferrerPolicy ReferrerPolicy `json:"referrerPolicy,omitempty"`
 }
 type NavigateResult struct {
-	FrameID    FrameID `json:"frameId"`
-	LoaderID   string  `json:"loaderId,omitempty"`
-	ErrorText  string  `json:"errorText,omitempty"`
-	IsDownload bool    `json:"isDownload,omitempty"`
+	FrameID    FrameID  `json:"frameId"`
+	LoaderID   LoaderID `json:"loaderId,omitempty"`
+	ErrorText  string   `json:"errorText,omitempty"`
+	IsDownload bool     `json:"isDownload,omitempty"`
 }
 
 func Navigate(url string) *NavigateParams {
@@ -1610,8 +1640,8 @@ type PrintToPDFParams struct {
 	GenerateDocumentOutline bool                         `json:"generateDocumentOutline,omitempty"`
 }
 type PrintToPDFResult struct {
-	Data   string `json:"data"`
-	Stream string `json:"stream,omitempty"`
+	Data   string       `json:"data"`
+	Stream StreamHandle `json:"stream,omitempty"`
 }
 
 func PrintToPDF() *PrintToPDFParams {
@@ -1699,9 +1729,9 @@ func (p *PrintToPDFParams) Do(ctx context.Context, caller Caller) (*PrintToPDFRe
 }
 
 type ReloadParams struct {
-	IgnoreCache            bool   `json:"ignoreCache,omitempty"`
-	ScriptToEvaluateOnLoad string `json:"scriptToEvaluateOnLoad,omitempty"`
-	LoaderID               string `json:"loaderId,omitempty"`
+	IgnoreCache            bool     `json:"ignoreCache,omitempty"`
+	ScriptToEvaluateOnLoad string   `json:"scriptToEvaluateOnLoad,omitempty"`
+	LoaderID               LoaderID `json:"loaderId,omitempty"`
 }
 
 func Reload() *ReloadParams {
@@ -1715,7 +1745,7 @@ func (p ReloadParams) WithScriptToEvaluateOnLoad(scriptToEvaluateOnLoad string) 
 	p.ScriptToEvaluateOnLoad = scriptToEvaluateOnLoad
 	return &p
 }
-func (p ReloadParams) WithLoaderID(loaderID string) *ReloadParams {
+func (p ReloadParams) WithLoaderID(loaderID LoaderID) *ReloadParams {
 	p.LoaderID = loaderID
 	return &p
 }
@@ -2495,7 +2525,7 @@ func (p *GetAnnotatedPageContentParams) Do(ctx context.Context, caller Caller) (
 }
 
 type DOMContentEventFired struct {
-	Timestamp float64 `json:"timestamp"`
+	Timestamp MonotonicTime `json:"timestamp"`
 }
 
 func DecodeDOMContentEventFired(data json.RawMessage) (*DOMContentEventFired, error) {
@@ -2510,7 +2540,7 @@ func DecodeDOMContentEventFired(data json.RawMessage) (*DOMContentEventFired, er
 type FileChooserOpened struct {
 	FrameID       FrameID               `json:"frameId"`
 	Mode          FileChooserOpenedMode `json:"mode"`
-	BackendNodeID int                   `json:"backendNodeId,omitempty"`
+	BackendNodeID BackendNodeID         `json:"backendNodeId,omitempty"`
 }
 
 func DecodeFileChooserOpened(data json.RawMessage) (*FileChooserOpened, error) {
@@ -2619,7 +2649,7 @@ func DecodeFrameResized(data json.RawMessage) (*FrameResized, error) {
 type FrameStartedNavigating struct {
 	FrameID        FrameID                              `json:"frameId"`
 	URL            string                               `json:"url"`
-	LoaderID       string                               `json:"loaderId"`
+	LoaderID       LoaderID                             `json:"loaderId"`
 	NavigationType FrameStartedNavigatingNavigationType `json:"navigationType"`
 }
 
@@ -2780,10 +2810,10 @@ func DecodeJavascriptDialogOpening(data json.RawMessage) (*JavascriptDialogOpeni
 }
 
 type LifecycleEvent struct {
-	FrameID   FrameID `json:"frameId"`
-	LoaderID  string  `json:"loaderId"`
-	Name      string  `json:"name"`
-	Timestamp float64 `json:"timestamp"`
+	FrameID   FrameID       `json:"frameId"`
+	LoaderID  LoaderID      `json:"loaderId"`
+	Name      string        `json:"name"`
+	Timestamp MonotonicTime `json:"timestamp"`
 }
 
 func DecodeLifecycleEvent(data json.RawMessage) (*LifecycleEvent, error) {
@@ -2796,7 +2826,7 @@ func DecodeLifecycleEvent(data json.RawMessage) (*LifecycleEvent, error) {
 }
 
 type BackForwardCacheNotUsed struct {
-	LoaderID                    string                                      `json:"loaderId"`
+	LoaderID                    LoaderID                                    `json:"loaderId"`
 	FrameID                     FrameID                                     `json:"frameId"`
 	NotRestoredExplanations     []BackForwardCacheNotRestoredExplanation    `json:"notRestoredExplanations"`
 	NotRestoredExplanationsTree *BackForwardCacheNotRestoredExplanationTree `json:"notRestoredExplanationsTree,omitempty"`
@@ -2812,7 +2842,7 @@ func DecodeBackForwardCacheNotUsed(data json.RawMessage) (*BackForwardCacheNotUs
 }
 
 type LoadEventFired struct {
-	Timestamp float64 `json:"timestamp"`
+	Timestamp MonotonicTime `json:"timestamp"`
 }
 
 func DecodeLoadEventFired(data json.RawMessage) (*LoadEventFired, error) {

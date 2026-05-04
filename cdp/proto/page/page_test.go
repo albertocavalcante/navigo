@@ -109,7 +109,7 @@ func TestDecodeLoadEventFired(t *testing.T) {
 		t.Fatalf("DecodeLoadEventFired() error = %v", err)
 	}
 
-	if got, want := event.Timestamp, 123.45; got != want {
+	if got, want := float64(event.Timestamp), 123.45; got != want {
 		t.Fatalf("event.Timestamp = %v, want %v", got, want)
 	}
 }

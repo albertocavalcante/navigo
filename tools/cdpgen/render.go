@@ -137,7 +137,7 @@ func renderDomainWithTypeIndex(domain domainSpec, globalTypeIndex map[string]typ
 
 func buildGeneratedDomain(domain domainSpec, globalTypeIndex map[string]typeSpec) (generatedDomain, error) {
 	model := generatedDomain{
-		PackageName: lowerFirst(domain.Domain),
+		PackageName: packageNameForDomain(domain.Domain),
 		DomainName:  domain.Domain,
 		NeedsJSON:   len(domain.Events) > 0,
 	}
@@ -433,56 +433,56 @@ func (state *renderState) shouldUsePointerType(ownerName string, property proper
 
 func (state *renderState) goTypeForProperty(property propertySpec) (string, bool, []generatedObjectType, []generatedAliasType, []generatedEnum, error) {
 	if property.Ref != "" {
-		crossDomain := strings.Contains(property.Ref, ".")
 		ref := property.Ref
-		if strings.Contains(ref, ".") {
-			ref = ref[strings.LastIndex(ref, ".")+1:]
+		baseRef := ref
+		if strings.Contains(baseRef, ".") {
+			baseRef = baseRef[strings.LastIndex(baseRef, ".")+1:]
 		}
+		_, localRef := state.localTypeIndex[baseRef]
 
-		spec, ok := state.lookupType(ref, property.Ref)
+		spec, ok := state.lookupType(baseRef, property.Ref)
 		if !ok {
 			return "string", false, nil, nil, nil, nil
 		}
 
 		switch {
 		case len(spec.Enum) > 0:
-			if crossDomain {
-				return "string", false, nil, nil, nil, nil
+			enumType := exportName(baseRef)
+			if localRef {
+				return enumType, false, nil, nil, nil, nil
 			}
-			return exportName(ref), false, nil, nil, nil, nil
+			return enumType, false, nil, nil, []generatedEnum{{
+				TypeName: enumType,
+				Values:   buildEnumValues(enumType, spec.Enum),
+			}}, nil
 		case spec.Type == "object":
-			objectType, needsJSON, refs, aliasRefs, enumRefs, err := state.buildObjectType(ref, spec.Properties)
+			objectType, needsJSON, refs, aliasRefs, enumRefs, err := state.buildObjectType(baseRef, spec.Properties)
 			if err != nil {
 				return "", false, nil, nil, nil, err
 			}
-			return exportName(ref), needsJSON, mergeObjectTypes([]generatedObjectType{objectType}, refs), aliasRefs, enumRefs, nil
+			return exportName(baseRef), needsJSON, mergeObjectTypes([]generatedObjectType{objectType}, refs), aliasRefs, enumRefs, nil
 		case spec.Type == "array":
 			if spec.Items == nil {
-				if crossDomain {
-					return "[]any", false, nil, nil, nil, nil
-				}
 				aliasType, _, err := state.buildAliasType(spec)
 				if err != nil {
 					return "", false, nil, nil, nil, err
 				}
-				return exportName(ref), false, nil, []generatedAliasType{aliasType}, nil, nil
+				aliasType.TypeName = exportName(baseRef)
+				return exportName(baseRef), false, nil, []generatedAliasType{aliasType}, nil, nil
 			}
-			if crossDomain {
-				itemType, needsJSON, refs, aliasRefs, enumRefs, err := state.goTypeForProperty(*spec.Items)
-				if err != nil {
-					return "", false, nil, nil, nil, err
-				}
-				return "[]" + itemType, needsJSON, refs, aliasRefs, enumRefs, nil
+			aliasType, needsJSON, err := state.buildAliasType(spec)
+			if err != nil {
+				return "", false, nil, nil, nil, err
 			}
+			aliasType.TypeName = exportName(baseRef)
+			return exportName(baseRef), needsJSON, nil, []generatedAliasType{aliasType}, nil, nil
 		default:
-			if crossDomain {
-				return primitiveGoType(spec.Type), false, nil, nil, nil, nil
-			}
 			aliasType, _, err := state.buildAliasType(spec)
 			if err != nil {
 				return "", false, nil, nil, nil, err
 			}
-			return exportName(ref), false, nil, []generatedAliasType{aliasType}, nil, nil
+			aliasType.TypeName = exportName(baseRef)
+			return exportName(baseRef), false, nil, []generatedAliasType{aliasType}, nil, nil
 		}
 	}
 

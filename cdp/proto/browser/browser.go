@@ -133,6 +133,8 @@ const (
 
 type BrowserContextID string
 type WindowID int
+type FrameID string
+type TargetID string
 type Bounds struct {
 	Left        int         `json:"left,omitempty"`
 	Top         int         `json:"top,omitempty"`
@@ -490,7 +492,7 @@ func (p *GetWindowBoundsParams) Do(ctx context.Context, caller Caller) (*GetWind
 }
 
 type GetWindowForTargetParams struct {
-	TargetID string `json:"targetId,omitempty"`
+	TargetID TargetID `json:"targetId,omitempty"`
 }
 type GetWindowForTargetResult struct {
 	WindowID WindowID `json:"windowId"`
@@ -500,7 +502,7 @@ type GetWindowForTargetResult struct {
 func GetWindowForTarget() *GetWindowForTargetParams {
 	return &GetWindowForTargetParams{}
 }
-func (p GetWindowForTargetParams) WithTargetID(targetID string) *GetWindowForTargetParams {
+func (p GetWindowForTargetParams) WithTargetID(targetID TargetID) *GetWindowForTargetParams {
 	p.TargetID = targetID
 	return &p
 }
@@ -659,10 +661,10 @@ func (p *AddPrivacySandboxCoordinatorKeyConfigParams) Do(ctx context.Context, ca
 }
 
 type DownloadWillBegin struct {
-	FrameID           string `json:"frameId"`
-	GUID              string `json:"guid"`
-	URL               string `json:"url"`
-	SuggestedFilename string `json:"suggestedFilename"`
+	FrameID           FrameID `json:"frameId"`
+	GUID              string  `json:"guid"`
+	URL               string  `json:"url"`
+	SuggestedFilename string  `json:"suggestedFilename"`
 }
 
 func DecodeDownloadWillBegin(data json.RawMessage) (*DownloadWillBegin, error) {

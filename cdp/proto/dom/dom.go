@@ -336,6 +336,8 @@ type BackendNodeID int
 type NodeID int
 type Quad []float64
 type StyleSheetID string
+type ExecutionContextID int
+type FrameID string
 type RemoteObjectID string
 type ScriptID string
 type UniqueDebuggerID string
@@ -346,10 +348,10 @@ type BackendNode struct {
 	BackendNodeID BackendNodeID `json:"backendNodeId"`
 }
 type BoxModel struct {
-	Content      any               `json:"content"`
-	Padding      any               `json:"padding"`
-	Border       any               `json:"border"`
-	Margin       any               `json:"margin"`
+	Content      Quad              `json:"content"`
+	Padding      Quad              `json:"padding"`
+	Border       Quad              `json:"border"`
+	Margin       Quad              `json:"margin"`
 	Width        int               `json:"width"`
 	Height       int               `json:"height"`
 	ShapeOutside *ShapeOutsideInfo `json:"shapeOutside,omitempty"`
@@ -384,7 +386,7 @@ type Node struct {
 	PseudoType               PseudoType        `json:"pseudoType,omitempty"`
 	PseudoIDentifier         string            `json:"pseudoIdentifier,omitempty"`
 	ShadowRootType           ShadowRootType    `json:"shadowRootType,omitempty"`
-	FrameID                  string            `json:"frameId,omitempty"`
+	FrameID                  FrameID           `json:"frameId,omitempty"`
 	ContentDocument          *Node             `json:"contentDocument,omitempty"`
 	ShadowRoots              []Node            `json:"shadowRoots,omitempty"`
 	TemplateContent          *Node             `json:"templateContent,omitempty"`
@@ -412,7 +414,7 @@ type Rect struct {
 	Height float64 `json:"height"`
 }
 type ShapeOutsideInfo struct {
-	Bounds      any   `json:"bounds"`
+	Bounds      Quad  `json:"bounds"`
 	Shape       []any `json:"shape"`
 	MarginShape []any `json:"marginShape"`
 }
@@ -425,9 +427,9 @@ type AdProvenance struct {
 	AdScriptAncestry *AdAncestry `json:"adScriptAncestry,omitempty"`
 }
 type AdScriptIDentifier struct {
-	ScriptID   string `json:"scriptId"`
-	DebuggerID string `json:"debuggerId"`
-	Name       string `json:"name"`
+	ScriptID   ScriptID         `json:"scriptId"`
+	DebuggerID UniqueDebuggerID `json:"debuggerId"`
+	Name       string           `json:"name"`
 }
 type CallFrame struct {
 	FunctionName string   `json:"functionName"`
@@ -540,11 +542,11 @@ func (p *CopyToParams) Do(ctx context.Context, caller Caller) (*CopyToResult, er
 }
 
 type DescribeNodeParams struct {
-	NodeID        NodeID        `json:"nodeId,omitempty"`
-	BackendNodeID BackendNodeID `json:"backendNodeId,omitempty"`
-	ObjectID      string        `json:"objectId,omitempty"`
-	Depth         int           `json:"depth,omitempty"`
-	Pierce        bool          `json:"pierce,omitempty"`
+	NodeID        NodeID         `json:"nodeId,omitempty"`
+	BackendNodeID BackendNodeID  `json:"backendNodeId,omitempty"`
+	ObjectID      RemoteObjectID `json:"objectId,omitempty"`
+	Depth         int            `json:"depth,omitempty"`
+	Pierce        bool           `json:"pierce,omitempty"`
 }
 type DescribeNodeResult struct {
 	Node Node `json:"node"`
@@ -561,7 +563,7 @@ func (p DescribeNodeParams) WithBackendNodeID(backendNodeID BackendNodeID) *Desc
 	p.BackendNodeID = backendNodeID
 	return &p
 }
-func (p DescribeNodeParams) WithObjectID(objectID string) *DescribeNodeParams {
+func (p DescribeNodeParams) WithObjectID(objectID RemoteObjectID) *DescribeNodeParams {
 	p.ObjectID = objectID
 	return &p
 }
@@ -587,10 +589,10 @@ func (p *DescribeNodeParams) Do(ctx context.Context, caller Caller) (*DescribeNo
 }
 
 type ScrollIntoViewIfNeededParams struct {
-	NodeID        NodeID        `json:"nodeId,omitempty"`
-	BackendNodeID BackendNodeID `json:"backendNodeId,omitempty"`
-	ObjectID      string        `json:"objectId,omitempty"`
-	Rect          *Rect         `json:"rect,omitempty"`
+	NodeID        NodeID         `json:"nodeId,omitempty"`
+	BackendNodeID BackendNodeID  `json:"backendNodeId,omitempty"`
+	ObjectID      RemoteObjectID `json:"objectId,omitempty"`
+	Rect          *Rect          `json:"rect,omitempty"`
 }
 
 func ScrollIntoViewIfNeeded() *ScrollIntoViewIfNeededParams {
@@ -604,7 +606,7 @@ func (p ScrollIntoViewIfNeededParams) WithBackendNodeID(backendNodeID BackendNod
 	p.BackendNodeID = backendNodeID
 	return &p
 }
-func (p ScrollIntoViewIfNeededParams) WithObjectID(objectID string) *ScrollIntoViewIfNeededParams {
+func (p ScrollIntoViewIfNeededParams) WithObjectID(objectID RemoteObjectID) *ScrollIntoViewIfNeededParams {
 	p.ObjectID = objectID
 	return &p
 }
@@ -685,9 +687,9 @@ func (p *EnableParams) Do(ctx context.Context, caller Caller) error {
 }
 
 type FocusParams struct {
-	NodeID        NodeID        `json:"nodeId,omitempty"`
-	BackendNodeID BackendNodeID `json:"backendNodeId,omitempty"`
-	ObjectID      string        `json:"objectId,omitempty"`
+	NodeID        NodeID         `json:"nodeId,omitempty"`
+	BackendNodeID BackendNodeID  `json:"backendNodeId,omitempty"`
+	ObjectID      RemoteObjectID `json:"objectId,omitempty"`
 }
 
 func Focus() *FocusParams {
@@ -701,7 +703,7 @@ func (p FocusParams) WithBackendNodeID(backendNodeID BackendNodeID) *FocusParams
 	p.BackendNodeID = backendNodeID
 	return &p
 }
-func (p FocusParams) WithObjectID(objectID string) *FocusParams {
+func (p FocusParams) WithObjectID(objectID RemoteObjectID) *FocusParams {
 	p.ObjectID = objectID
 	return &p
 }
@@ -741,9 +743,9 @@ func (p *GetAttributesParams) Do(ctx context.Context, caller Caller) (*GetAttrib
 }
 
 type GetBoxModelParams struct {
-	NodeID        NodeID        `json:"nodeId,omitempty"`
-	BackendNodeID BackendNodeID `json:"backendNodeId,omitempty"`
-	ObjectID      string        `json:"objectId,omitempty"`
+	NodeID        NodeID         `json:"nodeId,omitempty"`
+	BackendNodeID BackendNodeID  `json:"backendNodeId,omitempty"`
+	ObjectID      RemoteObjectID `json:"objectId,omitempty"`
 }
 type GetBoxModelResult struct {
 	Model BoxModel `json:"model"`
@@ -760,7 +762,7 @@ func (p GetBoxModelParams) WithBackendNodeID(backendNodeID BackendNodeID) *GetBo
 	p.BackendNodeID = backendNodeID
 	return &p
 }
-func (p GetBoxModelParams) WithObjectID(objectID string) *GetBoxModelParams {
+func (p GetBoxModelParams) WithObjectID(objectID RemoteObjectID) *GetBoxModelParams {
 	p.ObjectID = objectID
 	return &p
 }
@@ -778,12 +780,12 @@ func (p *GetBoxModelParams) Do(ctx context.Context, caller Caller) (*GetBoxModel
 }
 
 type GetContentQuadsParams struct {
-	NodeID        NodeID        `json:"nodeId,omitempty"`
-	BackendNodeID BackendNodeID `json:"backendNodeId,omitempty"`
-	ObjectID      string        `json:"objectId,omitempty"`
+	NodeID        NodeID         `json:"nodeId,omitempty"`
+	BackendNodeID BackendNodeID  `json:"backendNodeId,omitempty"`
+	ObjectID      RemoteObjectID `json:"objectId,omitempty"`
 }
 type GetContentQuadsResult struct {
-	Quads []any `json:"quads"`
+	Quads []Quad `json:"quads"`
 }
 
 func GetContentQuads() *GetContentQuadsParams {
@@ -797,7 +799,7 @@ func (p GetContentQuadsParams) WithBackendNodeID(backendNodeID BackendNodeID) *G
 	p.BackendNodeID = backendNodeID
 	return &p
 }
-func (p GetContentQuadsParams) WithObjectID(objectID string) *GetContentQuadsParams {
+func (p GetContentQuadsParams) WithObjectID(objectID RemoteObjectID) *GetContentQuadsParams {
 	p.ObjectID = objectID
 	return &p
 }
@@ -915,7 +917,7 @@ type GetNodeForLocationParams struct {
 }
 type GetNodeForLocationResult struct {
 	BackendNodeID BackendNodeID `json:"backendNodeId"`
-	FrameID       string        `json:"frameId"`
+	FrameID       FrameID       `json:"frameId"`
 	NodeID        NodeID        `json:"nodeId,omitempty"`
 }
 
@@ -944,10 +946,10 @@ func (p *GetNodeForLocationParams) Do(ctx context.Context, caller Caller) (*GetN
 }
 
 type GetOuterHTMLParams struct {
-	NodeID           NodeID        `json:"nodeId,omitempty"`
-	BackendNodeID    BackendNodeID `json:"backendNodeId,omitempty"`
-	ObjectID         string        `json:"objectId,omitempty"`
-	IncludeShadowDOM bool          `json:"includeShadowDOM,omitempty"`
+	NodeID           NodeID         `json:"nodeId,omitempty"`
+	BackendNodeID    BackendNodeID  `json:"backendNodeId,omitempty"`
+	ObjectID         RemoteObjectID `json:"objectId,omitempty"`
+	IncludeShadowDOM bool           `json:"includeShadowDOM,omitempty"`
 }
 type GetOuterHTMLResult struct {
 	OuterHTML string `json:"outerHTML"`
@@ -964,7 +966,7 @@ func (p GetOuterHTMLParams) WithBackendNodeID(backendNodeID BackendNodeID) *GetO
 	p.BackendNodeID = backendNodeID
 	return &p
 }
-func (p GetOuterHTMLParams) WithObjectID(objectID string) *GetOuterHTMLParams {
+func (p GetOuterHTMLParams) WithObjectID(objectID RemoteObjectID) *GetOuterHTMLParams {
 	p.ObjectID = objectID
 	return &p
 }
@@ -1390,13 +1392,13 @@ func (p *RequestChildNodesParams) Do(ctx context.Context, caller Caller) error {
 }
 
 type RequestNodeParams struct {
-	ObjectID string `json:"objectId"`
+	ObjectID RemoteObjectID `json:"objectId"`
 }
 type RequestNodeResult struct {
 	NodeID NodeID `json:"nodeId"`
 }
 
-func RequestNode(objectID string) *RequestNodeParams {
+func RequestNode(objectID RemoteObjectID) *RequestNodeParams {
 	return &RequestNodeParams{ObjectID: objectID}
 }
 func (p *RequestNodeParams) Do(ctx context.Context, caller Caller) (*RequestNodeResult, error) {
@@ -1413,10 +1415,10 @@ func (p *RequestNodeParams) Do(ctx context.Context, caller Caller) (*RequestNode
 }
 
 type ResolveNodeParams struct {
-	NodeID             NodeID `json:"nodeId,omitempty"`
-	BackendNodeID      int    `json:"backendNodeId,omitempty"`
-	ObjectGroup        string `json:"objectGroup,omitempty"`
-	ExecutionContextID int    `json:"executionContextId,omitempty"`
+	NodeID             NodeID             `json:"nodeId,omitempty"`
+	BackendNodeID      BackendNodeID      `json:"backendNodeId,omitempty"`
+	ObjectGroup        string             `json:"objectGroup,omitempty"`
+	ExecutionContextID ExecutionContextID `json:"executionContextId,omitempty"`
 }
 type ResolveNodeResult struct {
 	Object RemoteObject `json:"object"`
@@ -1429,7 +1431,7 @@ func (p ResolveNodeParams) WithNodeID(nodeID NodeID) *ResolveNodeParams {
 	p.NodeID = nodeID
 	return &p
 }
-func (p ResolveNodeParams) WithBackendNodeID(backendNodeID int) *ResolveNodeParams {
+func (p ResolveNodeParams) WithBackendNodeID(backendNodeID BackendNodeID) *ResolveNodeParams {
 	p.BackendNodeID = backendNodeID
 	return &p
 }
@@ -1437,7 +1439,7 @@ func (p ResolveNodeParams) WithObjectGroup(objectGroup string) *ResolveNodeParam
 	p.ObjectGroup = objectGroup
 	return &p
 }
-func (p ResolveNodeParams) WithExecutionContextID(executionContextID int) *ResolveNodeParams {
+func (p ResolveNodeParams) WithExecutionContextID(executionContextID ExecutionContextID) *ResolveNodeParams {
 	p.ExecutionContextID = executionContextID
 	return &p
 }
@@ -1501,10 +1503,10 @@ func (p *SetAttributesAsTextParams) Do(ctx context.Context, caller Caller) error
 }
 
 type SetFileInputFilesParams struct {
-	Files         []string      `json:"files"`
-	NodeID        NodeID        `json:"nodeId,omitempty"`
-	BackendNodeID BackendNodeID `json:"backendNodeId,omitempty"`
-	ObjectID      string        `json:"objectId,omitempty"`
+	Files         []string       `json:"files"`
+	NodeID        NodeID         `json:"nodeId,omitempty"`
+	BackendNodeID BackendNodeID  `json:"backendNodeId,omitempty"`
+	ObjectID      RemoteObjectID `json:"objectId,omitempty"`
 }
 
 func SetFileInputFiles(files []string) *SetFileInputFilesParams {
@@ -1518,7 +1520,7 @@ func (p SetFileInputFilesParams) WithBackendNodeID(backendNodeID BackendNodeID) 
 	p.BackendNodeID = backendNodeID
 	return &p
 }
-func (p SetFileInputFilesParams) WithObjectID(objectID string) *SetFileInputFilesParams {
+func (p SetFileInputFilesParams) WithObjectID(objectID RemoteObjectID) *SetFileInputFilesParams {
 	p.ObjectID = objectID
 	return &p
 }
@@ -1577,13 +1579,13 @@ func (p *GetNodeStackTracesParams) Do(ctx context.Context, caller Caller) (*GetN
 }
 
 type GetFileInfoParams struct {
-	ObjectID string `json:"objectId"`
+	ObjectID RemoteObjectID `json:"objectId"`
 }
 type GetFileInfoResult struct {
 	Path string `json:"path"`
 }
 
-func GetFileInfo(objectID string) *GetFileInfoParams {
+func GetFileInfo(objectID RemoteObjectID) *GetFileInfoParams {
 	return &GetFileInfoParams{ObjectID: objectID}
 }
 func (p *GetFileInfoParams) Do(ctx context.Context, caller Caller) (*GetFileInfoResult, error) {
@@ -1723,14 +1725,14 @@ func (p *UndoParams) Do(ctx context.Context, caller Caller) error {
 }
 
 type GetFrameOwnerParams struct {
-	FrameID string `json:"frameId"`
+	FrameID FrameID `json:"frameId"`
 }
 type GetFrameOwnerResult struct {
 	BackendNodeID BackendNodeID `json:"backendNodeId"`
 	NodeID        NodeID        `json:"nodeId,omitempty"`
 }
 
-func GetFrameOwner(frameID string) *GetFrameOwnerParams {
+func GetFrameOwner(frameID FrameID) *GetFrameOwnerParams {
 	return &GetFrameOwnerParams{FrameID: frameID}
 }
 func (p *GetFrameOwnerParams) Do(ctx context.Context, caller Caller) (*GetFrameOwnerResult, error) {
@@ -2035,8 +2037,8 @@ func DecodeTopLayerElementsUpdated(data json.RawMessage) (*TopLayerElementsUpdat
 }
 
 type ScrollableFlagUpdated struct {
-	NodeID       int  `json:"nodeId"`
-	IsScrollable bool `json:"isScrollable"`
+	NodeID       NodeID `json:"nodeId"`
+	IsScrollable bool   `json:"isScrollable"`
 }
 
 func DecodeScrollableFlagUpdated(data json.RawMessage) (*ScrollableFlagUpdated, error) {
@@ -2049,7 +2051,7 @@ func DecodeScrollableFlagUpdated(data json.RawMessage) (*ScrollableFlagUpdated, 
 }
 
 type AdRelatedStateUpdated struct {
-	NodeID       int           `json:"nodeId"`
+	NodeID       NodeID        `json:"nodeId"`
 	AdProvenance *AdProvenance `json:"adProvenance,omitempty"`
 }
 
@@ -2063,8 +2065,8 @@ func DecodeAdRelatedStateUpdated(data json.RawMessage) (*AdRelatedStateUpdated, 
 }
 
 type AffectedByStartingStylesFlagUpdated struct {
-	NodeID                   int  `json:"nodeId"`
-	AffectedByStartingStyles bool `json:"affectedByStartingStyles"`
+	NodeID                   NodeID `json:"nodeId"`
+	AffectedByStartingStyles bool   `json:"affectedByStartingStyles"`
 }
 
 func DecodeAffectedByStartingStylesFlagUpdated(data json.RawMessage) (*AffectedByStartingStylesFlagUpdated, error) {

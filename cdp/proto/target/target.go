@@ -54,6 +54,8 @@ const (
 type SessionID string
 type TargetFilter []FilterEntry
 type TargetID string
+type BrowserContextID string
+type FrameID string
 type FilterEntry struct {
 	Exclude bool   `json:"exclude,omitempty"`
 	Type    string `json:"type,omitempty"`
@@ -63,18 +65,18 @@ type RemoteLocation struct {
 	Port int    `json:"port"`
 }
 type TargetInfo struct {
-	TargetID         TargetID `json:"targetId"`
-	Type             string   `json:"type"`
-	Title            string   `json:"title"`
-	URL              string   `json:"url"`
-	Attached         bool     `json:"attached"`
-	ParentID         TargetID `json:"parentId,omitempty"`
-	OpenerID         TargetID `json:"openerId,omitempty"`
-	CanAccessOpener  bool     `json:"canAccessOpener"`
-	OpenerFrameID    string   `json:"openerFrameId,omitempty"`
-	ParentFrameID    string   `json:"parentFrameId,omitempty"`
-	BrowserContextID string   `json:"browserContextId,omitempty"`
-	Subtype          string   `json:"subtype,omitempty"`
+	TargetID         TargetID         `json:"targetId"`
+	Type             string           `json:"type"`
+	Title            string           `json:"title"`
+	URL              string           `json:"url"`
+	Attached         bool             `json:"attached"`
+	ParentID         TargetID         `json:"parentId,omitempty"`
+	OpenerID         TargetID         `json:"openerId,omitempty"`
+	CanAccessOpener  bool             `json:"canAccessOpener"`
+	OpenerFrameID    FrameID          `json:"openerFrameId,omitempty"`
+	ParentFrameID    FrameID          `json:"parentFrameId,omitempty"`
+	BrowserContextID BrowserContextID `json:"browserContextId,omitempty"`
+	Subtype          string           `json:"subtype,omitempty"`
 }
 type ActivateTargetParams struct {
 	TargetID TargetID `json:"targetId"`
@@ -204,7 +206,7 @@ type CreateBrowserContextParams struct {
 	OriginsWithUniversalNetworkAccess []string `json:"originsWithUniversalNetworkAccess,omitempty"`
 }
 type CreateBrowserContextResult struct {
-	BrowserContextID string `json:"browserContextId"`
+	BrowserContextID BrowserContextID `json:"browserContextId"`
 }
 
 func CreateBrowserContext() *CreateBrowserContextParams {
@@ -242,8 +244,8 @@ func (p *CreateBrowserContextParams) Do(ctx context.Context, caller Caller) (*Cr
 type GetBrowserContextsParams struct {
 }
 type GetBrowserContextsResult struct {
-	BrowserContextIDs       []string `json:"browserContextIds"`
-	DefaultBrowserContextID string   `json:"defaultBrowserContextId,omitempty"`
+	BrowserContextIDs       []BrowserContextID `json:"browserContextIds"`
+	DefaultBrowserContextID BrowserContextID   `json:"defaultBrowserContextId,omitempty"`
 }
 
 func GetBrowserContexts() *GetBrowserContextsParams {
@@ -263,19 +265,19 @@ func (p *GetBrowserContextsParams) Do(ctx context.Context, caller Caller) (*GetB
 }
 
 type CreateTargetParams struct {
-	URL                     string      `json:"url"`
-	Left                    int         `json:"left,omitempty"`
-	Top                     int         `json:"top,omitempty"`
-	Width                   int         `json:"width,omitempty"`
-	Height                  int         `json:"height,omitempty"`
-	WindowState             WindowState `json:"windowState,omitempty"`
-	BrowserContextID        string      `json:"browserContextId,omitempty"`
-	EnableBeginFrameControl bool        `json:"enableBeginFrameControl,omitempty"`
-	NewWindow               bool        `json:"newWindow,omitempty"`
-	Background              bool        `json:"background,omitempty"`
-	ForTab                  bool        `json:"forTab,omitempty"`
-	Hidden                  bool        `json:"hidden,omitempty"`
-	Focus                   bool        `json:"focus,omitempty"`
+	URL                     string           `json:"url"`
+	Left                    int              `json:"left,omitempty"`
+	Top                     int              `json:"top,omitempty"`
+	Width                   int              `json:"width,omitempty"`
+	Height                  int              `json:"height,omitempty"`
+	WindowState             WindowState      `json:"windowState,omitempty"`
+	BrowserContextID        BrowserContextID `json:"browserContextId,omitempty"`
+	EnableBeginFrameControl bool             `json:"enableBeginFrameControl,omitempty"`
+	NewWindow               bool             `json:"newWindow,omitempty"`
+	Background              bool             `json:"background,omitempty"`
+	ForTab                  bool             `json:"forTab,omitempty"`
+	Hidden                  bool             `json:"hidden,omitempty"`
+	Focus                   bool             `json:"focus,omitempty"`
 }
 type CreateTargetResult struct {
 	TargetID TargetID `json:"targetId"`
@@ -304,7 +306,7 @@ func (p CreateTargetParams) WithWindowState(windowState WindowState) *CreateTarg
 	p.WindowState = windowState
 	return &p
 }
-func (p CreateTargetParams) WithBrowserContextID(browserContextID string) *CreateTargetParams {
+func (p CreateTargetParams) WithBrowserContextID(browserContextID BrowserContextID) *CreateTargetParams {
 	p.BrowserContextID = browserContextID
 	return &p
 }
@@ -374,10 +376,10 @@ func (p *DetachFromTargetParams) Do(ctx context.Context, caller Caller) error {
 }
 
 type DisposeBrowserContextParams struct {
-	BrowserContextID string `json:"browserContextId"`
+	BrowserContextID BrowserContextID `json:"browserContextId"`
 }
 
-func DisposeBrowserContext(browserContextID string) *DisposeBrowserContextParams {
+func DisposeBrowserContext(browserContextID BrowserContextID) *DisposeBrowserContextParams {
 	return &DisposeBrowserContextParams{BrowserContextID: browserContextID}
 }
 func (p *DisposeBrowserContextParams) Do(ctx context.Context, caller Caller) error {
@@ -420,7 +422,7 @@ func (p *GetTargetInfoParams) Do(ctx context.Context, caller Caller) (*GetTarget
 }
 
 type GetTargetsParams struct {
-	Filter any `json:"filter,omitempty"`
+	Filter TargetFilter `json:"filter,omitempty"`
 }
 type GetTargetsResult struct {
 	TargetInfos []TargetInfo `json:"targetInfos"`
@@ -429,7 +431,7 @@ type GetTargetsResult struct {
 func GetTargets() *GetTargetsParams {
 	return &GetTargetsParams{}
 }
-func (p GetTargetsParams) WithFilter(filter any) *GetTargetsParams {
+func (p GetTargetsParams) WithFilter(filter TargetFilter) *GetTargetsParams {
 	p.Filter = filter
 	return &p
 }
@@ -476,10 +478,10 @@ func (p *SendMessageToTargetParams) Do(ctx context.Context, caller Caller) error
 }
 
 type SetAutoAttachParams struct {
-	AutoAttach             bool `json:"autoAttach"`
-	WaitForDebuggerOnStart bool `json:"waitForDebuggerOnStart"`
-	Flatten                bool `json:"flatten,omitempty"`
-	Filter                 any  `json:"filter,omitempty"`
+	AutoAttach             bool         `json:"autoAttach"`
+	WaitForDebuggerOnStart bool         `json:"waitForDebuggerOnStart"`
+	Flatten                bool         `json:"flatten,omitempty"`
+	Filter                 TargetFilter `json:"filter,omitempty"`
 }
 
 func SetAutoAttach(autoAttach bool, waitForDebuggerOnStart bool) *SetAutoAttachParams {
@@ -489,7 +491,7 @@ func (p SetAutoAttachParams) WithFlatten(flatten bool) *SetAutoAttachParams {
 	p.Flatten = flatten
 	return &p
 }
-func (p SetAutoAttachParams) WithFilter(filter any) *SetAutoAttachParams {
+func (p SetAutoAttachParams) WithFilter(filter TargetFilter) *SetAutoAttachParams {
 	p.Filter = filter
 	return &p
 }
@@ -506,15 +508,15 @@ func (p *SetAutoAttachParams) Do(ctx context.Context, caller Caller) error {
 }
 
 type AutoAttachRelatedParams struct {
-	TargetID               TargetID `json:"targetId"`
-	WaitForDebuggerOnStart bool     `json:"waitForDebuggerOnStart"`
-	Filter                 any      `json:"filter,omitempty"`
+	TargetID               TargetID     `json:"targetId"`
+	WaitForDebuggerOnStart bool         `json:"waitForDebuggerOnStart"`
+	Filter                 TargetFilter `json:"filter,omitempty"`
 }
 
 func AutoAttachRelated(targetID TargetID, waitForDebuggerOnStart bool) *AutoAttachRelatedParams {
 	return &AutoAttachRelatedParams{TargetID: targetID, WaitForDebuggerOnStart: waitForDebuggerOnStart}
 }
-func (p AutoAttachRelatedParams) WithFilter(filter any) *AutoAttachRelatedParams {
+func (p AutoAttachRelatedParams) WithFilter(filter TargetFilter) *AutoAttachRelatedParams {
 	p.Filter = filter
 	return &p
 }
@@ -531,14 +533,14 @@ func (p *AutoAttachRelatedParams) Do(ctx context.Context, caller Caller) error {
 }
 
 type SetDiscoverTargetsParams struct {
-	Discover bool `json:"discover"`
-	Filter   any  `json:"filter,omitempty"`
+	Discover bool         `json:"discover"`
+	Filter   TargetFilter `json:"filter,omitempty"`
 }
 
 func SetDiscoverTargets(discover bool) *SetDiscoverTargetsParams {
 	return &SetDiscoverTargetsParams{Discover: discover}
 }
-func (p SetDiscoverTargetsParams) WithFilter(filter any) *SetDiscoverTargetsParams {
+func (p SetDiscoverTargetsParams) WithFilter(filter TargetFilter) *SetDiscoverTargetsParams {
 	p.Filter = filter
 	return &p
 }
