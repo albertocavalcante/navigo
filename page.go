@@ -41,6 +41,7 @@ type Page struct {
 	nextWaiterID          int
 	axWatchers            map[int]*axWatcher
 	nextAXWatcherID       int
+	logObserverCount      int
 	routes                map[int]*routeEntry
 	nextRouteID           int
 	routeCancel           func()
