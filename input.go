@@ -55,14 +55,13 @@ func dispatchMouseClick(ctx context.Context, caller cdpinput.Caller, x float64, 
 	return nil
 }
 
-func centerPointFromQuads(quads []any) (float64, float64, bool) {
+func centerPointFromQuads(quads []cdpdom.Quad) (float64, float64, bool) {
 	for _, item := range quads {
-		quadValues, ok := toFloat64Slice(item)
-		if !ok || len(quadValues) < 8 {
+		if len(item) < 8 {
 			continue
 		}
 
-		return centerPointFromCoordinates(quadValues[:8])
+		return centerPointFromCoordinates(item[:8])
 	}
 
 	return 0, 0, false
@@ -93,6 +92,12 @@ func centerPointFromCoordinates(values []float64) (float64, float64, bool) {
 }
 
 func toFloat64Slice(value any) ([]float64, bool) {
+	if quad, ok := value.(cdpdom.Quad); ok {
+		return []float64(quad), true
+	}
+	if values, ok := value.([]float64); ok {
+		return values, true
+	}
 	items, ok := value.([]any)
 	if !ok {
 		return nil, false

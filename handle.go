@@ -57,7 +57,7 @@ func (h *Handle) AsElement(ctx context.Context) (*Element, error) {
 		return nil, err
 	}
 
-	nodeResult, err := cdpdom.RequestNode(string(objectID)).Do(ctx, h.page.session)
+	nodeResult, err := cdpdom.RequestNode(cdpdom.RemoteObjectID(objectID)).Do(ctx, h.page.session)
 	if err != nil {
 		return nil, fmt.Errorf("resolve handle to element: %w", err)
 	}

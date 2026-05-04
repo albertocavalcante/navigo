@@ -233,7 +233,7 @@ func (p *Page) Navigate(ctx context.Context, url string) (*cdppage.NavigateResul
 	p.mu.Lock()
 	p.lastNavigation = navigationRecord{
 		frameID:  string(result.FrameID),
-		loaderID: result.LoaderID,
+		loaderID: string(result.LoaderID),
 		startSeq: startSeq,
 		sameDoc:  result.LoaderID == "",
 	}
@@ -532,10 +532,11 @@ func (p *Page) recordLifecycleEvent(event cdppage.LifecycleEvent) {
 	seq := p.eventSeq
 
 	if event.LoaderID != "" {
-		if p.lifecycleByLoader[event.LoaderID] == nil {
-			p.lifecycleByLoader[event.LoaderID] = make(map[cdppage.LifecycleEventName]uint64)
+		loaderID := string(event.LoaderID)
+		if p.lifecycleByLoader[loaderID] == nil {
+			p.lifecycleByLoader[loaderID] = make(map[cdppage.LifecycleEventName]uint64)
 		}
-		p.lifecycleByLoader[event.LoaderID][event.Name] = seq
+		p.lifecycleByLoader[loaderID][event.Name] = seq
 	}
 
 	if event.FrameID != "" {
@@ -628,7 +629,7 @@ func (p *Page) recordFrameNavigated(event cdppage.FrameNavigated) {
 
 	if event.Frame.LoaderID != "" && p.mainFrameID == frameID {
 		p.lastNavigation.frameID = frameID
-		p.lastNavigation.loaderID = event.Frame.LoaderID
+		p.lastNavigation.loaderID = string(event.Frame.LoaderID)
 		p.lastNavigation.sameDoc = false
 	}
 
@@ -949,7 +950,7 @@ func (p *Page) resolveNodeIDToElement(ctx context.Context, nodeID cdpdom.NodeID)
 
 	resolveResult, err := cdpdom.ResolveNode().
 		WithNodeID(nodeID).
-		WithExecutionContextID(int(executionContextID)).
+		WithExecutionContextID(cdpdom.ExecutionContextID(executionContextID)).
 		Do(ctx, p.session)
 	if err != nil {
 		return nil, fmt.Errorf("resolve node: %w", err)
@@ -980,8 +981,8 @@ func (p *Page) resolveBackendNodeIDToElement(ctx context.Context, backendNodeID 
 	}
 
 	resolveResult, err := cdpdom.ResolveNode().
-		WithBackendNodeID(backendNodeID).
-		WithExecutionContextID(int(executionContextID)).
+		WithBackendNodeID(cdpdom.BackendNodeID(backendNodeID)).
+		WithExecutionContextID(cdpdom.ExecutionContextID(executionContextID)).
 		Do(ctx, p.session)
 	if err != nil {
 		return nil, fmt.Errorf("resolve backend node: %w", err)

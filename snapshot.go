@@ -70,8 +70,8 @@ func (s *Snapshot) reset(nodes []cdpaccessibility.AXNode) {
 			Description:   axValueString(node.Description),
 			Value:         axValueString(node.Value),
 			Ignored:       node.Ignored,
-			BackendNodeID: node.BackendDOMNodeID,
-			FrameID:       node.FrameID,
+			BackendNodeID: int(node.BackendDOMNodeID),
+			FrameID:       string(node.FrameID),
 			Properties:    make(map[string]string, len(node.Properties)),
 		}
 		if node.BackendDOMNodeID != 0 && !node.Ignored {

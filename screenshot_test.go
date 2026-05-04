@@ -124,7 +124,7 @@ func TestViewportFromBoxModel(t *testing.T) {
 	t.Parallel()
 
 	clip, ok := viewportFromBoxModel(cdpdom.BoxModel{
-		Border: []any{10.0, 20.0, 110.0, 20.0, 110.0, 60.0, 10.0, 60.0},
+		Border: cdpdom.Quad{10.0, 20.0, 110.0, 20.0, 110.0, 60.0, 10.0, 60.0},
 	})
 	if !ok {
 		t.Fatal("viewportFromBoxModel() ok = false, want true")

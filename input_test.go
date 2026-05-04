@@ -9,8 +9,8 @@ import (
 func TestCenterPointFromQuads(t *testing.T) {
 	t.Parallel()
 
-	x, y, ok := centerPointFromQuads([]any{
-		[]any{10.0, 20.0, 110.0, 20.0, 110.0, 60.0, 10.0, 60.0},
+	x, y, ok := centerPointFromQuads([]cdpdom.Quad{
+		{10.0, 20.0, 110.0, 20.0, 110.0, 60.0, 10.0, 60.0},
 	})
 	if !ok {
 		t.Fatal("centerPointFromQuads() ok = false, want true")
@@ -27,7 +27,7 @@ func TestCenterPointFromBoxModel(t *testing.T) {
 	t.Parallel()
 
 	x, y, ok := centerPointFromBoxModel(cdpdom.BoxModel{
-		Content: []any{10.0, 20.0, 110.0, 20.0, 110.0, 60.0, 10.0, 60.0},
+		Content: cdpdom.Quad{10.0, 20.0, 110.0, 20.0, 110.0, 60.0, 10.0, 60.0},
 	})
 	if !ok {
 		t.Fatal("centerPointFromBoxModel() ok = false, want true")

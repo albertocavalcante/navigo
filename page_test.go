@@ -831,7 +831,7 @@ func TestPageGotoWaitsAtomically(t *testing.T) {
 	case err := <-errCh:
 		t.Fatalf("page.Goto() error = %v", err)
 	case result := <-gotoResultCh:
-		if got, want := result.LoaderID, "loader-1"; got != want {
+		if got, want := string(result.LoaderID), "loader-1"; got != want {
 			t.Fatalf("result.LoaderID = %q, want %q", got, want)
 		}
 	case <-time.After(time.Second):
