@@ -41,6 +41,10 @@ type Page struct {
 	nextWaiterID          int
 	axWatchers            map[int]*axWatcher
 	nextAXWatcherID       int
+	routes                map[int]*routeEntry
+	nextRouteID           int
+	routeCancel           func()
+	routeDone             chan struct{}
 	eventCancel           func()
 	eventDone             chan struct{}
 }
@@ -181,6 +185,10 @@ func (p *Page) Close(ctx context.Context) error {
 
 		p.failWaiters(errors.New("page closed"))
 		p.closeAXWatchers()
+		if err := p.stopRoutes(ctx); err != nil && p.closeErr == nil {
+			p.closeErr = err
+			return
+		}
 
 		if p.browser == nil || p.browser.conn == nil {
 			return
