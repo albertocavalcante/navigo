@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/albertocavalcante/navigo/cdp"
+	cdpaccessibility "github.com/albertocavalcante/navigo/cdp/proto/accessibility"
 	cdpdom "github.com/albertocavalcante/navigo/cdp/proto/dom"
 	cdppage "github.com/albertocavalcante/navigo/cdp/proto/page"
 	cdpruntime "github.com/albertocavalcante/navigo/cdp/proto/runtime"
@@ -34,6 +35,13 @@ type Page struct {
 	mainFrameID           string
 	waiters               map[int]*navigationWaiter
 	nextWaiterID          int
+	axWatchers            map[int]*axWatcher
+	nextAXWatcherID       int
+}
+
+type axWatcher struct {
+	ch   chan struct{}
+	done chan struct{}
 }
 
 type WaitUntil string
@@ -112,6 +120,7 @@ func (b *Browser) NewPage(ctx context.Context) (*Page, error) {
 		frameStates:           make(map[string]*frameState),
 		contextsByID:          make(map[cdpruntime.ExecutionContextID]executionContextState),
 		defaultContextByFrame: make(map[string]cdpruntime.ExecutionContextID),
+		axWatchers:            make(map[int]*axWatcher),
 	}
 	page.keyboard = Keyboard{session: session}
 
@@ -127,6 +136,10 @@ func (b *Browser) NewPage(ctx context.Context) (*Page, error) {
 
 	if err := cdpdom.Enable().Do(ctx, session); err != nil {
 		return nil, fmt.Errorf("enable DOM domain: %w", err)
+	}
+
+	if err := cdpaccessibility.Enable().Do(ctx, session); err != nil {
+		return nil, fmt.Errorf("enable accessibility domain: %w", err)
 	}
 
 	if err := cdppage.SetLifecycleEventsEnabled(true).Do(ctx, session); err != nil {
@@ -424,6 +437,20 @@ func (p *Page) startEventLoop() {
 				}
 
 				p.recordExecutionContextsCleared()
+			case cdpaccessibility.EventLoadComplete:
+				if _, err := cdpaccessibility.DecodeLoadComplete(event.Params); err != nil {
+					p.failWaiters(fmt.Errorf("wait for navigation: %w", err))
+					return
+				}
+
+				p.notifyAXWatchers()
+			case cdpaccessibility.EventNodesUpdated:
+				if _, err := cdpaccessibility.DecodeNodesUpdated(event.Params); err != nil {
+					p.failWaiters(fmt.Errorf("wait for navigation: %w", err))
+					return
+				}
+
+				p.notifyAXWatchers()
 			}
 		}
 
@@ -621,6 +648,50 @@ func (p *Page) recordExecutionContextsCleared() {
 
 	clear(p.contextsByID)
 	clear(p.defaultContextByFrame)
+}
+
+func (p *Page) subscribeAXUpdates() (<-chan struct{}, func()) {
+	watcher := &axWatcher{
+		ch:   make(chan struct{}, 1),
+		done: make(chan struct{}),
+	}
+
+	p.mu.Lock()
+	if p.axWatchers == nil {
+		p.axWatchers = make(map[int]*axWatcher)
+	}
+	id := p.nextAXWatcherID
+	p.nextAXWatcherID++
+	p.axWatchers[id] = watcher
+	p.mu.Unlock()
+
+	cancel := func() {
+		p.mu.Lock()
+		if existing, ok := p.axWatchers[id]; ok {
+			delete(p.axWatchers, id)
+			close(existing.done)
+		}
+		p.mu.Unlock()
+	}
+
+	return watcher.ch, cancel
+}
+
+func (p *Page) notifyAXWatchers() {
+	p.mu.Lock()
+	watchers := make([]*axWatcher, 0, len(p.axWatchers))
+	for _, watcher := range p.axWatchers {
+		watchers = append(watchers, watcher)
+	}
+	p.mu.Unlock()
+
+	for _, watcher := range watchers {
+		select {
+		case <-watcher.done:
+		case watcher.ch <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func (p *Page) ensureFrameStateLocked(frameID string) *frameState {

@@ -16,6 +16,9 @@ type Snapshot struct {
 	byRef    map[string]*SnapshotNode
 	roots    []*SnapshotNode
 	markdown string
+	updates  <-chan struct{}
+	closed   chan struct{}
+	cancel   func()
 }
 
 type SnapshotNode struct {
@@ -43,7 +46,11 @@ func (p *Page) Snapshot(ctx context.Context) (*Snapshot, error) {
 
 func newSnapshot(page *Page, nodes []cdpaccessibility.AXNode) *Snapshot {
 	snapshot := &Snapshot{
-		page: page,
+		page:   page,
+		closed: make(chan struct{}),
+	}
+	if page != nil {
+		snapshot.updates, snapshot.cancel = page.subscribeAXUpdates()
 	}
 	snapshot.reset(nodes)
 	return snapshot
@@ -110,6 +117,42 @@ func (s *Snapshot) Refresh(ctx context.Context) error {
 
 	s.reset(result.Nodes)
 	return nil
+}
+
+func (s *Snapshot) WaitForUpdate(ctx context.Context) error {
+	if s.updates == nil {
+		return fmt.Errorf("wait for snapshot update: snapshot is not attached to page updates")
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("wait for snapshot update: %w", ctx.Err())
+	case <-s.closed:
+		return fmt.Errorf("wait for snapshot update: snapshot closed")
+	case _, ok := <-s.updates:
+		if !ok {
+			return fmt.Errorf("wait for snapshot update: update stream closed")
+		}
+	}
+
+	if err := s.Refresh(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Snapshot) Close() {
+	select {
+	case <-s.closed:
+	default:
+		close(s.closed)
+	}
+
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
 }
 
 func (s *Snapshot) Nodes() []*SnapshotNode {

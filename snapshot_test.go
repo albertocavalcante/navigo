@@ -276,3 +276,68 @@ func TestSnapshotRefresh(t *testing.T) {
 		}
 	}
 }
+
+func TestSnapshotWaitForUpdate(t *testing.T) {
+	t.Parallel()
+
+	transport := newFakeTransport()
+	conn := cdp.NewConn(transport)
+	go func() {
+		_ = conn.Run(context.Background())
+	}()
+
+	page := &Page{
+		session:    conn.RootSession(),
+		axWatchers: make(map[int]*axWatcher),
+	}
+	page.startEventLoop()
+
+	resultCh := make(chan *Snapshot, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		snapshot, err := page.Snapshot(context.Background())
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- snapshot
+	}()
+
+	expectMethodAndReply(t, transport, 1, cdpaccessibility.CommandGetFullAXTree, `{"nodes":[
+		{"nodeId":"ax-root","ignored":false,"role":{"type":"role","value":"RootWebArea"},"name":{"type":"string","value":"Before"}}
+	]}`)
+
+	var snapshot *Snapshot
+	select {
+	case err := <-errCh:
+		t.Fatalf("page.Snapshot() error = %v", err)
+	case snapshot = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for snapshot")
+	}
+
+	waitErrCh := make(chan error, 1)
+	go func() {
+		waitErrCh <- snapshot.WaitForUpdate(context.Background())
+	}()
+
+	transport.reads <- []byte(`{"method":"Accessibility.nodesUpdated","params":{"nodes":[{"nodeId":"ax-root","ignored":false,"role":{"type":"role","value":"RootWebArea"},"name":{"type":"string","value":"Changed"}}]}}`)
+	expectMethodAndReply(t, transport, 2, cdpaccessibility.CommandGetFullAXTree, `{"nodes":[
+		{"nodeId":"ax-root","ignored":false,"role":{"type":"role","value":"RootWebArea"},"name":{"type":"string","value":"After update"}}
+	]}`)
+
+	select {
+	case err := <-waitErrCh:
+		if err != nil {
+			t.Fatalf("snapshot.WaitForUpdate() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for snapshot.WaitForUpdate()")
+	}
+
+	if got, want := snapshot.Markdown(), `- RootWebArea "After update"`; got != want {
+		t.Fatalf("snapshot.Markdown() after update = %q, want %q", got, want)
+	}
+
+	snapshot.Close()
+}
