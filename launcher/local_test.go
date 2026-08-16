@@ -58,6 +58,17 @@ func TestLocalLaunchPreservesConfiguredProfile(t *testing.T) {
 	}
 }
 
+func TestLocalResolveExecutable(t *testing.T) {
+	local := Local{}
+	resolved, err := local.ResolveExecutable(os.Args[0])
+	if err != nil {
+		t.Fatalf("ResolveExecutable() error = %v", err)
+	}
+	if resolved != os.Args[0] {
+		t.Fatalf("ResolveExecutable() = %q, want %q", resolved, os.Args[0])
+	}
+}
+
 func TestParseDevToolsActivePort(t *testing.T) {
 	cases := []struct {
 		name    string

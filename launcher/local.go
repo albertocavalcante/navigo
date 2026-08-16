@@ -53,6 +53,12 @@ type Process struct {
 	waitErr  error
 }
 
+// ResolveExecutable returns the explicit or discovered Chrome/Chromium binary
+// without starting a process.
+func (l Local) ResolveExecutable(explicit string) (string, error) {
+	return l.executable(explicit)
+}
+
 // RemoteURL returns the HTTP discovery endpoint accepted by [Remote.Connect].
 func (p *Process) RemoteURL() string {
 	if p == nil {
