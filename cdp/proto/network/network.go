@@ -868,8 +868,23 @@ type ExemptedSetCookieWithReason struct {
 	CookieLine      string                `json:"cookieLine"`
 	Cookie          Cookie                `json:"cookie"`
 }
-type Headers struct {
+
+// Headers preserves every member of the protocol's open JSON object.
+type Headers map[string]json.RawMessage
+
+// MarshalJSON preserves the legacy empty-object wire value for a zero dictionary.
+func (value Headers) MarshalJSON() ([]byte, error) {
+	if value == nil {
+		return []byte("{}"), nil
+	}
+	type object Headers
+	encoded, err := json.Marshal(object(value))
+	if err != nil {
+		return nil, fmt.Errorf("marshal Headers: %w", err)
+	}
+	return encoded, nil
 }
+
 type Initiator struct {
 	Type         InitiatorType `json:"type"`
 	Stack        *StackTrace   `json:"stack,omitempty"`

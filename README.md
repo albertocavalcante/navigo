@@ -10,6 +10,19 @@ Current state:
 - Early DOM selector, node-resolution, and element helper APIs are implemented
 - Seed CDP code generation exists in `tools/cdpgen` for `Accessibility`, `Browser`, `CSS`, `DOM`, `DOMSnapshot`, `Emulation`, `Fetch`, `IO`, `Input`, `Log`, `Network`, `Overlay`, `Page`, `Performance`, `Runtime`, `Security`, `Storage`, and `Target`
 
+## Low-level header dictionaries
+
+Generated `network.Headers` and `fetch.Headers` use `map[string]json.RawMessage`
+for CDP's open header objects. Members survive decoding and can be set explicitly:
+
+```go
+headers := network.Headers{"Accept": json.RawMessage(`"application/json"`)}
+err := network.SetExtraHTTPHeaders(headers).Do(ctx, session)
+```
+
+A zero-value dictionary encodes as `{}`. These low-level types can contain
+sensitive headers; the high-level `NetworkEvent` observer continues to omit headers.
+
 ## Development
 
 ```bash

@@ -1,8 +1,10 @@
 package navigo
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -105,5 +107,23 @@ func TestPageResponseBody(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for page.ResponseBody()")
+	}
+}
+
+func TestNetworkObserverDoesNotExposeHeaderValues(t *testing.T) {
+	t.Parallel()
+	raw := json.RawMessage(`{"requestId":"synthetic","request":{"url":"https://example.invalid/","method":"GET","headers":{"Authorization":"SYNTHETIC_SECRET","Cookie":"fixture=secret"}}}`)
+	event, ok, err := decodeNetworkEvent(cdp.Event{Method: cdpnetwork.EventRequestWillBeSent, Params: raw})
+	if err != nil || !ok {
+		t.Fatalf("decode network event: %v", err)
+	}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"SYNTHETIC_SECRET", "fixture=secret", "Authorization", "Cookie"} {
+		if bytes.Contains(encoded, []byte(forbidden)) {
+			t.Fatal("high-level network event exposed a header")
+		}
 	}
 }
