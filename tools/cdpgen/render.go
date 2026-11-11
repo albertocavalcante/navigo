@@ -61,6 +61,7 @@ type generatedAliasType struct {
 type generatedObjectType struct {
 	TypeName string
 	Fields   []generatedField
+	FreeForm bool
 }
 
 type generatedField struct {
@@ -348,8 +349,8 @@ func (state *renderState) buildObjectType(name string, properties []propertySpec
 	state.building[typeName] = true
 	defer delete(state.building, typeName)
 
-	objectType := generatedObjectType{TypeName: typeName}
-	var needsJSON bool
+	objectType := generatedObjectType{TypeName: typeName, FreeForm: len(properties) == 0}
+	needsJSON := objectType.FreeForm
 	var refs []generatedObjectType
 	var aliasRefs []generatedAliasType
 	var enumRefs []generatedEnum
@@ -749,19 +750,55 @@ type {{ .TypeName }} {{ .Type }}
 
 {{- end }}
 {{- range .ObjectTypes }}
+{{- if .FreeForm }}
+// {{ .TypeName }} preserves every member of the protocol's open JSON object.
+type {{ .TypeName }} map[string]json.RawMessage
+
+// MarshalJSON preserves the legacy empty-object wire value for a zero dictionary.
+func (value {{ .TypeName }}) MarshalJSON() ([]byte, error) {
+	if value == nil {
+		return []byte("{}"), nil
+	}
+	type object {{ .TypeName }}
+	encoded, err := json.Marshal(object(value))
+	if err != nil {
+		return nil, fmt.Errorf("marshal {{ .TypeName }}: %w", err)
+	}
+	return encoded, nil
+}
+{{- else }}
 type {{ .TypeName }} struct {
 {{- range .Fields }}
 	{{ .Name }} {{ .Type }} ` + "`json:\"{{ .JSONName }}{{ if .OmitEmpty }},omitempty{{ end }}\"`" + `
 {{- end }}
 }
+{{- end }}
 
 {{- end }}
 {{- range .ReferencedObjects }}
+{{- if .FreeForm }}
+// {{ .TypeName }} preserves every member of the protocol's open JSON object.
+type {{ .TypeName }} map[string]json.RawMessage
+
+// MarshalJSON preserves the legacy empty-object wire value for a zero dictionary.
+func (value {{ .TypeName }}) MarshalJSON() ([]byte, error) {
+	if value == nil {
+		return []byte("{}"), nil
+	}
+	type object {{ .TypeName }}
+	encoded, err := json.Marshal(object(value))
+	if err != nil {
+		return nil, fmt.Errorf("marshal {{ .TypeName }}: %w", err)
+	}
+	return encoded, nil
+}
+{{- else }}
 type {{ .TypeName }} struct {
 {{- range .Fields }}
 	{{ .Name }} {{ .Type }} ` + "`json:\"{{ .JSONName }}{{ if .OmitEmpty }},omitempty{{ end }}\"`" + `
 {{- end }}
 }
+{{- end }}
 
 {{- end }}
 {{- range .Commands }}
