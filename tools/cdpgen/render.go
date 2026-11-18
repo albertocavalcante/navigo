@@ -374,16 +374,19 @@ func (state *renderState) buildObjectType(name string, properties []propertySpec
 func (state *renderState) buildField(ownerName string, property propertySpec) (generatedField, bool, []generatedObjectType, []generatedAliasType, []generatedEnum, error) {
 	if len(property.Enum) > 0 {
 		enumType := exportName(ownerName) + exportName(property.Name)
-		return generatedField{
-				Name:      exportName(property.Name),
-				Type:      enumType,
-				JSONName:  property.Name,
-				OmitEmpty: property.Optional,
-				Optional:  property.Optional,
-			}, false, nil, nil, []generatedEnum{{
-				TypeName: enumType,
-				Values:   buildEnumValues(enumType, property.Enum),
-			}}, nil
+		field := generatedField{
+			Name:      exportName(property.Name),
+			Type:      enumType,
+			JSONName:  property.Name,
+			OmitEmpty: property.Optional,
+			Optional:  property.Optional,
+		}
+		enums := []generatedEnum{{
+			TypeName: enumType,
+			Values:   buildEnumValues(enumType, property.Enum),
+		}}
+
+		return field, false, nil, nil, enums, nil
 	}
 
 	fieldType, needsJSON, refs, aliasRefs, enumRefs, err := state.goTypeForProperty(property)
