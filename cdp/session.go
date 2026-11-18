@@ -20,6 +20,7 @@ type Session struct {
 	mu          sync.RWMutex
 	subscribers map[int]*subscriber
 	nextID      int
+	closed      bool // set when the session is removed or the connection ends
 }
 
 type subscriber struct {
@@ -64,6 +65,10 @@ func (s *Session) Call(ctx context.Context, method string, params any, result an
 			return response.msg.Error
 		}
 
+		if s.id == "" && method == methodDetachFromTarget {
+			s.conn.removeDetached(rawParams)
+		}
+
 		if result == nil || len(response.msg.Result) == 0 {
 			return nil
 		}
@@ -88,6 +93,13 @@ func (s *Session) Subscribe(buffer int) (<-chan Event, func()) {
 	ch := make(chan Event, buffer)
 
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		close(ch)
+
+		return ch, func() {}
+	}
+
 	id := s.nextID
 	s.nextID++
 	if s.subscribers == nil {
@@ -122,6 +134,7 @@ func (s *Session) publish(event Event) {
 
 func (s *Session) closeSubscribers() {
 	s.mu.Lock()
+	s.closed = true
 	subscribers := make([]*subscriber, 0, len(s.subscribers))
 	for id, subscriber := range s.subscribers {
 		delete(s.subscribers, id)

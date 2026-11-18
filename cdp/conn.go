@@ -127,6 +127,34 @@ func (c *Conn) Run(ctx context.Context) (runErr error) {
 			SessionID: msg.SessionID,
 			Params:    msg.Params,
 		})
+
+		if msg.Method == methodDetachedFromTarget {
+			c.removeDetached(msg.Params)
+		}
+	}
+}
+
+const (
+	methodDetachedFromTarget = "Target.detachedFromTarget"
+	methodDetachFromTarget   = "Target.detachFromTarget"
+)
+
+// removeSession forgets a client-attached session once it is detached, so a
+// long-lived connection does not accumulate dead sessions. The root session is
+// never removed. Subscribers see their channel close after the events already
+// buffered, exactly as at connection shutdown.
+func (c *Conn) removeSession(id string) {
+	if id == "" {
+		return
+	}
+
+	c.sessionsMu.Lock()
+	session, ok := c.sessions[id]
+	delete(c.sessions, id)
+	c.sessionsMu.Unlock()
+
+	if ok {
+		session.closeSubscribers()
 	}
 }
 
@@ -208,5 +236,16 @@ func (c *Conn) closeSessions() {
 
 	for _, session := range sessions {
 		session.closeSubscribers()
+	}
+}
+
+// removeDetached drops the session named by the params of a successful
+// Target.detachFromTarget call.
+func (c *Conn) removeDetached(params json.RawMessage) {
+	var p struct {
+		SessionID string `json:"sessionId"`
+	}
+	if json.Unmarshal(params, &p) == nil {
+		c.removeSession(p.SessionID)
 	}
 }
