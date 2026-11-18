@@ -3,6 +3,7 @@ package cdp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -155,4 +156,66 @@ func TestSessionUnsubscribeIsSafeDuringPublish(t *testing.T) {
 		default:
 		}
 	}
+}
+
+func TestUnknownSessionEventsDoNotGrowSessionTable(t *testing.T) {
+	t.Parallel()
+
+	const events = 500
+
+	transport := &sliceTransport{}
+	for i := range events {
+		transport.payloads = append(transport.payloads, fmt.Appendf(nil, `{"method":"Page.loadEventFired","sessionId":"hostile-%d"}`, i))
+	}
+
+	conn := NewConn(transport)
+	known := conn.Session("known")
+	ch, cancel := known.Subscribe(1)
+	defer cancel()
+
+	transport.payloads = append(transport.payloads, []byte(`{"method":"Known.event","sessionId":"known"}`))
+
+	sizeBefore := sessionCount(conn)
+
+	if err := conn.Run(context.Background()); err == nil {
+		t.Fatal("Run() error = nil, want EOF")
+	}
+
+	if got := sessionCount(conn); got != sizeBefore {
+		t.Fatalf("session table size = %d, want %d", got, sizeBefore)
+	}
+
+	select {
+	case event := <-ch:
+		if event.Method != "Known.event" {
+			t.Fatalf("event.Method = %q", event.Method)
+		}
+	default:
+		t.Fatal("event for an existing session was not delivered")
+	}
+}
+
+func sessionCount(conn *Conn) int {
+	conn.sessionsMu.Lock()
+	defer conn.sessionsMu.Unlock()
+
+	return len(conn.sessions)
+}
+
+// sliceTransport replays payloads then reports EOF.
+type sliceTransport struct {
+	payloads [][]byte
+}
+
+func (s *sliceTransport) Send(context.Context, []byte) error { return nil }
+func (s *sliceTransport) Close() error                       { return nil }
+func (s *sliceTransport) Read(context.Context) ([]byte, error) {
+	if len(s.payloads) == 0 {
+		return nil, io.EOF
+	}
+
+	next := s.payloads[0]
+	s.payloads = s.payloads[1:]
+
+	return next, nil
 }

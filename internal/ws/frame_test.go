@@ -14,12 +14,9 @@ func TestClientFrameRoundTrip(t *testing.T) {
 
 	payload := []byte("hello, world")
 	buffer := bytes.NewBuffer(nil)
+	buffer.Write(serverFrame(true, opcodeText, payload))
 
-	if err := writeClientFrame(buffer, opcodeText, payload); err != nil {
-		t.Fatalf("writeClientFrame() error = %v", err)
-	}
-
-	frame, err := readFrame(bufio.NewReader(buffer))
+	frame, err := readFrame(bufio.NewReader(buffer), 1<<20)
 	if err != nil {
 		t.Fatalf("readFrame() error = %v", err)
 	}
@@ -55,7 +52,7 @@ func TestReadContextCancellationUsesReadDeadlineOnly(t *testing.T) {
 		_ = server.Close()
 	}()
 
-	conn := &Conn{conn: client, reader: bufio.NewReader(client)}
+	conn := &Conn{conn: client, reader: bufio.NewReader(client), limits: defaultLimits()}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)

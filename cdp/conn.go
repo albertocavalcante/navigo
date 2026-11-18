@@ -72,6 +72,17 @@ func (c *Conn) Session(id string) *Session {
 	return session
 }
 
+// lookupSession returns an existing session without creating one. Event
+// routing uses it so a peer cannot grow the session table by inventing ids.
+func (c *Conn) lookupSession(id string) (*Session, bool) {
+	c.sessionsMu.Lock()
+	defer c.sessionsMu.Unlock()
+
+	session, ok := c.sessions[id]
+
+	return session, ok
+}
+
 func (c *Conn) Run(ctx context.Context) (runErr error) {
 	defer c.closeSessions()
 	defer func() {
@@ -104,7 +115,14 @@ func (c *Conn) Run(ctx context.Context) (runErr error) {
 			continue
 		}
 
-		c.Session(msg.SessionID).publish(Event{
+		// Events for sessions the client never created or attached are
+		// dropped: the peer must not be able to allocate session state.
+		session, ok := c.lookupSession(msg.SessionID)
+		if !ok {
+			continue
+		}
+
+		session.publish(Event{
 			Method:    msg.Method,
 			SessionID: msg.SessionID,
 			Params:    msg.Params,
