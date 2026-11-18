@@ -2,11 +2,13 @@ package ws
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha1" //nolint:gosec // RFC 6455 mandates SHA-1 for handshake validation.
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,7 +20,7 @@ import (
 
 const websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-func dialWebSocket(ctx context.Context, rawURL string) (net.Conn, *bufio.Reader, error) {
+func dialWebSocket(ctx context.Context, rawURL string, lim limits) (net.Conn, *bufio.Reader, error) {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse websocket URL: %w", err)
@@ -75,7 +77,13 @@ func dialWebSocket(ctx context.Context, rawURL string) (net.Conn, *bufio.Reader,
 	}
 
 	reader := bufio.NewReader(conn)
-	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodGet, URL: parsedURL})
+	head, err := readHandshakeHead(reader, lim.maxHandshake)
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("read websocket handshake: %w", err)
+	}
+
+	response, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(head)), &http.Request{Method: http.MethodGet, URL: parsedURL})
 	if err != nil {
 		_ = conn.Close()
 		return nil, nil, fmt.Errorf("read websocket handshake: %w", err)
@@ -164,4 +172,26 @@ func headerContainsToken(header http.Header, key string, token string) bool {
 	}
 
 	return false
+}
+
+// readHandshakeHead reads the HTTP response head (through the blank line) with
+// a hard byte limit, so a peer cannot stream headers without end. Bytes after
+// the head stay in r for the frame reader.
+func readHandshakeHead(r *bufio.Reader, limit int) ([]byte, error) {
+	var head []byte
+	for {
+		line, err := r.ReadSlice('\n')
+		head = append(head, line...)
+		if len(head) > limit {
+			return nil, ErrHandshakeTooLarge
+		}
+
+		if err != nil && !errors.Is(err, bufio.ErrBufferFull) {
+			return nil, err
+		}
+
+		if bytes.HasSuffix(head, []byte("\r\n\r\n")) || bytes.HasSuffix(head, []byte("\n\n")) {
+			return head, nil
+		}
+	}
 }
