@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
@@ -382,5 +383,260 @@ func TestDialRefusesOversizeHandshake(t *testing.T) {
 	_, err = Dial(ctx, "ws://"+listener.Addr().String()+"/", WithMaxHandshakeBytes(2048))
 	if !errors.Is(err, ErrHandshakeTooLarge) {
 		t.Fatalf("Dial() error = %v, want ErrHandshakeTooLarge", err)
+	}
+}
+
+// A context with no deadline must still cancel a handshake the server stalls,
+// and nothing may be left running afterwards.
+func TestDialCancelledMidHandshake(t *testing.T) {
+	// Not parallel: it samples the process-wide goroutine count.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	accepted := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		close(accepted)
+		<-release // accept, read nothing useful, answer nothing
+	}()
+
+	before := runtime.NumGoroutine()
+	ctx, cancel := context.WithCancel(t.Context())
+
+	result := make(chan error, 1)
+	go func() {
+		_, dialErr := Dial(ctx, "ws://"+listener.Addr().String()+"/")
+		result <- dialErr
+	}()
+
+	<-accepted
+	time.Sleep(50 * time.Millisecond) // let Dial block reading the response
+	cancel()
+
+	select {
+	case dialErr := <-result:
+		if !errors.Is(dialErr, context.Canceled) {
+			t.Fatalf("Dial() error = %v, want context.Canceled", dialErr)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Dial() did not return after the context was canceled")
+	}
+
+	close(release)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if after := runtime.NumGoroutine(); after > before {
+		t.Fatalf("goroutines = %d, want <= %d", after, before)
+	}
+}
+
+func TestCloseFrameEchoedOnceAndMalformedRejected(t *testing.T) {
+	t.Parallel()
+
+	code := []byte{0x03, 0xe8}
+
+	tests := []struct {
+		name     string
+		payload  []byte
+		wantEcho []byte
+		wantErr  error
+	}{
+		{"empty payload", nil, []byte{opcodeClose}, io.EOF},
+		{"status code only", code, append([]byte{opcodeClose}, code...), io.EOF},
+		{"status code and reason is echoed as code", append(append([]byte{}, code...), "bye"...), append([]byte{opcodeClose}, code...), io.EOF},
+		{"one-byte payload", []byte{0x03}, nil, ErrProtocol},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, echoed, err := readAll(t, serverFrame(true, opcodeClose, tt.payload), defaultLimits())
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("error = %v, want %v", err, tt.wantErr)
+			}
+
+			if !bytes.Equal(echoed, tt.wantEcho) {
+				t.Fatalf("echoed %q, want %q", echoed, tt.wantEcho)
+			}
+		})
+	}
+}
+
+// Over a real pipe: the echo reaches the peer exactly once, Close afterwards
+// adds no second frame, and a one-byte close fails the connection.
+func TestConnEchoesCloseOnceAndCloseDoesNotBlock(t *testing.T) {
+	t.Parallel()
+
+	client, server := net.Pipe()
+	conn := &Conn{conn: client, reader: bufio.NewReader(client), limits: defaultLimits()}
+
+	go func() {
+		_, _ = server.Write(serverFrame(true, opcodeClose, []byte{0x03, 0xe8}))
+	}()
+
+	frames := make(chan []byte, 4)
+	go func() {
+		defer close(frames)
+
+		buf := make([]byte, 64)
+		for {
+			n, err := server.Read(buf)
+			if n > 0 {
+				frames <- append([]byte(nil), buf[:n]...)
+			}
+
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	if _, err := conn.Read(t.Context()); !errors.Is(err, io.EOF) {
+		t.Fatalf("Read() error = %v, want io.EOF", err)
+	}
+
+	first := <-frames
+	if len(first) < 2 || first[0] != finalBit|opcodeClose {
+		t.Fatalf("echo frame = %x, want a close frame", first)
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		_ = conn.Close()
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close() blocked")
+	}
+
+	if extra, ok := <-frames; ok {
+		t.Fatalf("unexpected second frame %x after echo", extra)
+	}
+}
+
+func TestCloseDoesNotBlockOnStuckWriter(t *testing.T) {
+	t.Parallel()
+
+	client, server := net.Pipe()
+	defer func() { _ = server.Close() }()
+
+	conn := &Conn{conn: client, reader: bufio.NewReader(client), limits: defaultLimits()}
+
+	conn.writeMu.Lock() // a writer stuck mid-frame
+
+	closed := make(chan struct{})
+	go func() {
+		_ = conn.Close()
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close() blocked behind a stuck writer")
+	}
+}
+
+func TestClosePayloadSanitizesCode(t *testing.T) {
+	t.Parallel()
+
+	be := func(code uint16, reason string) []byte {
+		return append(binary.BigEndian.AppendUint16(nil, code), reason...)
+	}
+
+	tests := []struct {
+		name string
+		in   []byte
+		want []byte
+	}{
+		{"empty", nil, nil},
+		{"normal", be(1000, ""), be(1000, "")},
+		{"reason dropped", be(1001, "secret reason"), be(1001, "")},
+		{"app code", be(4000, "x"), be(4000, "")},
+		{"1004 reserved", be(1004, ""), be(1000, "")},
+		{"1005 never sent", be(1005, ""), be(1000, "")},
+		{"1006 never sent", be(1006, ""), be(1000, "")},
+		{"1015 never sent", be(1015, ""), be(1000, "")},
+		{"2999 unassigned", be(2999, ""), be(1000, "")},
+		{"5000 out of range", be(5000, ""), be(1000, "")},
+		{"zero", be(0, ""), be(1000, "")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := closePayload(tt.in); !bytes.Equal(got, tt.want) {
+				t.Fatalf("closePayload(%x) = %x, want %x", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// deadlineConn records the last write deadline set on it.
+type deadlineConn struct {
+	net.Conn
+
+	mu   sync.Mutex
+	last time.Time
+}
+
+func (d *deadlineConn) SetWriteDeadline(t time.Time) error {
+	d.mu.Lock()
+	d.last = t
+	d.mu.Unlock()
+
+	return d.Conn.SetWriteDeadline(t)
+}
+
+func (d *deadlineConn) lastDeadline() time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.last
+}
+
+func TestSendAfterCloseFrameIsRefusedAndDeadlineCleared(t *testing.T) {
+	t.Parallel()
+
+	client, server := net.Pipe()
+	defer func() { _ = server.Close() }()
+
+	recorder := &deadlineConn{Conn: client}
+	conn := &Conn{conn: recorder, reader: bufio.NewReader(client), limits: defaultLimits()}
+
+	go func() { _, _ = io.Copy(io.Discard, server) }()
+
+	if err := conn.sendClose(nil); err != nil {
+		t.Fatalf("sendClose() error = %v", err)
+	}
+
+	if !recorder.lastDeadline().IsZero() {
+		t.Fatalf("write deadline %v left set after the close frame", recorder.lastDeadline())
+	}
+
+	if err := conn.Send(t.Context(), []byte(`{}`)); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Send() after close error = %v, want ErrClosed", err)
+	}
+
+	if err := conn.writeControl(opcodePong, nil); !errors.Is(err, ErrClosed) {
+		t.Fatalf("pong after close error = %v, want ErrClosed", err)
 	}
 }

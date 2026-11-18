@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -218,4 +219,172 @@ func (s *sliceTransport) Read(context.Context) ([]byte, error) {
 	s.payloads = s.payloads[1:]
 
 	return next, nil
+}
+
+// The browser reporting a detach removes the session; a subscriber still
+// drains what was buffered and then sees its channel close.
+func TestDetachedEventRemovesSession(t *testing.T) {
+	t.Parallel()
+
+	const rounds = 200
+
+	transport := &sliceTransport{}
+	conn := NewConn(transport)
+	sizeBefore := sessionCount(conn)
+
+	var channels []<-chan Event
+	for i := range rounds {
+		id := fmt.Sprintf("s-%d", i)
+		ch, _ := conn.Session(id).Subscribe(2)
+		channels = append(channels, ch)
+		transport.payloads = append(transport.payloads,
+			fmt.Appendf(nil, `{"method":"Page.loadEventFired","sessionId":%q}`, id),
+			fmt.Appendf(nil, `{"method":"Target.detachedFromTarget","params":{"sessionId":%q}}`, id),
+		)
+	}
+
+	if got := sessionCount(conn); got != sizeBefore+rounds {
+		t.Fatalf("sessions after attach = %d, want %d", got, sizeBefore+rounds)
+	}
+
+	if err := conn.Run(context.Background()); err == nil {
+		t.Fatal("Run() error = nil, want EOF")
+	}
+
+	if got := sessionCount(conn); got != sizeBefore {
+		t.Fatalf("session table size = %d, want %d", got, sizeBefore)
+	}
+
+	for i, ch := range channels {
+		if event, ok := <-ch; !ok || event.Method != "Page.loadEventFired" {
+			t.Fatalf("channel %d: buffered event lost (event %+v, ok %v)", i, event, ok)
+		}
+
+		if _, ok := <-ch; ok {
+			t.Fatalf("channel %d: still open after detach", i)
+		}
+	}
+}
+
+// A successful client-side Target.detachFromTarget removes the session, a
+// failed one does not, and the root session is never removed.
+func TestDetachFromTargetCallRemovesSession(t *testing.T) {
+	t.Parallel()
+
+	transport := newFakeTransport()
+	conn := NewConn(transport)
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- conn.Run(context.Background()) }()
+
+	// Reply to every command; fail commands whose session id is "keep".
+	go func() {
+		for sent := range transport.sends {
+			var msg message
+			if json.Unmarshal(sent, &msg) != nil {
+				continue
+			}
+
+			if strings.Contains(string(msg.Params), "keep") {
+				transport.reads <- fmt.Appendf(nil, `{"id":%d,"error":{"code":-32602,"message":"no"}}`, msg.ID)
+				continue
+			}
+
+			transport.reads <- fmt.Appendf(nil, `{"id":%d,"result":{}}`, msg.ID)
+		}
+	}()
+
+	root := conn.RootSession()
+	sizeBefore := sessionCount(conn)
+
+	for i := range 50 {
+		id := fmt.Sprintf("c-%d", i)
+		conn.Session(id)
+
+		if err := root.Call(t.Context(), "Target.detachFromTarget", map[string]string{"sessionId": id}, nil); err != nil {
+			t.Fatalf("detach %s: %v", id, err)
+		}
+	}
+
+	conn.Session("keep")
+	if err := root.Call(t.Context(), "Target.detachFromTarget", map[string]string{"sessionId": "keep"}, nil); err == nil {
+		t.Fatal("expected the failing detach to return an error")
+	}
+
+	if got, want := sessionCount(conn), sizeBefore+1; got != want {
+		t.Fatalf("session table size = %d, want %d (failed detach keeps its session)", got, want)
+	}
+
+	if err := root.Call(t.Context(), "Target.detachFromTarget", map[string]string{"sessionId": ""}, nil); err != nil {
+		t.Fatalf("detach root: %v", err)
+	}
+
+	if _, ok := conn.lookupSession(""); !ok {
+		t.Fatal("root session was removed")
+	}
+
+	_ = conn.Close()
+	<-runErr
+	close(transport.sends)
+}
+
+// A stale handle to a removed session must not hand out a channel that is
+// never fed or closed.
+func TestSubscribeOnRemovedSessionIsClosed(t *testing.T) {
+	t.Parallel()
+
+	conn := NewConn(&sliceTransport{})
+	stale := conn.Session("gone")
+	conn.removeSession("gone")
+
+	ch, cancel := stale.Subscribe(4)
+	defer cancel()
+
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("received an event on a removed session")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("range over a removed session's channel would hang")
+	}
+
+	if _, ok := conn.lookupSession("gone"); ok {
+		t.Fatal("removed session is still routable")
+	}
+}
+
+// Detach events for sessions of nested targets arrive on their parent
+// session, not the root; they still remove the named session, but only when
+// the parent is itself known.
+func TestNestedDetachedEventRemovesSession(t *testing.T) {
+	t.Parallel()
+
+	transport := &sliceTransport{}
+	conn := NewConn(transport)
+	conn.Session("parent")
+	sizeBefore := sessionCount(conn)
+
+	for i := range 20 {
+		child := fmt.Sprintf("child-%d", i)
+		conn.Session(child)
+		transport.payloads = append(transport.payloads,
+			fmt.Appendf(nil, `{"method":"Target.detachedFromTarget","sessionId":"parent","params":{"sessionId":%q}}`, child))
+	}
+
+	conn.Session("protected")
+	transport.payloads = append(transport.payloads,
+		[]byte(`{"method":"Target.detachedFromTarget","sessionId":"unknown-parent","params":{"sessionId":"protected"}}`))
+
+	if err := conn.Run(context.Background()); err == nil {
+		t.Fatal("Run() error = nil, want EOF")
+	}
+
+	if got, want := sessionCount(conn), sizeBefore+1; got != want {
+		t.Fatalf("session table size = %d, want %d", got, want)
+	}
+
+	if _, ok := conn.lookupSession("protected"); !ok {
+		t.Fatal("an event on an unknown session removed another session")
+	}
 }

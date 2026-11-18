@@ -3,11 +3,13 @@ package ws
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -21,7 +23,13 @@ type Conn struct {
 
 	failMu sync.Mutex
 	failed error
+
+	closeSent atomic.Bool
 }
+
+// closeWriteBudget bounds how long a close frame may take to write or to wait
+// for a concurrent writer.
+const closeWriteBudget = 100 * time.Millisecond
 
 // Dial opens a WebSocket connection. Options tighten or relax the default
 // resource limits applied to the peer.
@@ -54,6 +62,11 @@ func (c *Conn) writeFrame(opcode byte, payload []byte) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 
+	// Nothing may follow a close frame (RFC 6455 5.5.1).
+	if c.closeSent.Load() {
+		return ErrClosed
+	}
+
 	return writeClientFrame(c.conn, opcode, payload)
 }
 
@@ -70,7 +83,7 @@ func (c *Conn) Read(ctx context.Context) ([]byte, error) {
 	}
 	defer restoreDeadline()
 
-	payload, err := readMessage(c.reader, c.writeFrame, c.limits)
+	payload, err := readMessage(c.reader, c.writeControl, c.limits)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil, io.EOF
@@ -142,6 +155,15 @@ func readMessage(r *bufio.Reader, writeFrame func(opcode byte, payload []byte) e
 					return nil, fmt.Errorf("respond to websocket ping: %w", err)
 				}
 			case opcodeClose:
+				// A close payload is empty or a two-byte status code plus an
+				// optional reason; a single byte is malformed (RFC 6455 5.5.1).
+				if len(f.payload) == 1 {
+					return nil, protocolError("close frame has a 1-byte payload")
+				}
+
+				// Echo the status code back, best effort, then report EOF.
+				_ = writeFrame(opcodeClose, f.payload[:min(len(f.payload), 2)])
+
 				return nil, io.EOF
 			}
 
@@ -179,9 +201,72 @@ func readMessage(r *bufio.Reader, writeFrame func(opcode byte, payload []byte) e
 	}
 }
 
+// writeControl writes a control frame. Close frames go through sendClose.
+func (c *Conn) writeControl(opcode byte, payload []byte) error {
+	if opcode == opcodeClose {
+		return c.sendClose(payload)
+	}
+
+	return c.writeFrame(opcode, payload)
+}
+
+// sendClose writes at most one close frame per connection. It never waits
+// longer than closeWriteBudget, even when another writer is stuck holding the
+// write lock, in which case the frame is skipped.
+func (c *Conn) sendClose(payload []byte) error {
+	if !c.closeSent.CompareAndSwap(false, true) {
+		return nil
+	}
+
+	payload = closePayload(payload)
+
+	deadline := time.Now().Add(closeWriteBudget)
+	for !c.writeMu.TryLock() {
+		if time.Now().After(deadline) {
+			return errors.New("send websocket close frame: writer busy")
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+	defer c.writeMu.Unlock()
+
+	// Nothing is written after the close frame, so the short deadline is
+	// cleared rather than left to expire on a later write.
+	_ = c.conn.SetWriteDeadline(deadline)
+	defer func() { _ = c.conn.SetWriteDeadline(time.Time{}) }()
+
+	return writeClientFrame(c.conn, opcodeClose, payload)
+}
+
+// closePayload turns the peer's close payload into the one we send back: its
+// status code when that is sendable (RFC 6455 7.4.1/7.4.2), otherwise 1000.
+// The reason text is never echoed. An empty payload stays empty.
+func closePayload(peer []byte) []byte {
+	if len(peer) < 2 {
+		return nil
+	}
+
+	code := binary.BigEndian.Uint16(peer[:2])
+	if !sendableCloseCode(code) {
+		code = 1000
+	}
+
+	return binary.BigEndian.AppendUint16(nil, code)
+}
+
+func sendableCloseCode(code uint16) bool {
+	switch {
+	case code >= 1000 && code <= 1003, code >= 1007 && code <= 1011, code >= 3000 && code <= 4999:
+		return true
+	default:
+		return false
+	}
+}
+
+// Close sends a close frame unless one was already echoed, then closes the
+// connection. It does not wait for the peer.
 func (c *Conn) Close() error {
-	_ = c.conn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
-	_ = c.writeFrame(opcodeClose, nil)
+	_ = c.sendClose(nil)
 
 	return c.conn.Close()
 }

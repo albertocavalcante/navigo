@@ -20,7 +20,19 @@ import (
 
 const websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+// dialWebSocket dials and upgrades. The connection is closed when ctx ends at
+// any point before the upgrade completes, so a context without a deadline
+// still cancels a handshake the peer stalls.
 func dialWebSocket(ctx context.Context, rawURL string, lim limits) (net.Conn, *bufio.Reader, error) {
+	conn, reader, err := dialWebSocketOnce(ctx, rawURL, lim)
+	if err != nil && ctx.Err() != nil && !errors.Is(err, ctx.Err()) {
+		err = fmt.Errorf("%w: %w", ctx.Err(), err)
+	}
+
+	return conn, reader, err
+}
+
+func dialWebSocketOnce(ctx context.Context, rawURL string, lim limits) (net.Conn, *bufio.Reader, error) {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse websocket URL: %w", err)
@@ -45,6 +57,11 @@ func dialWebSocket(ctx context.Context, rawURL string, lim limits) (net.Conn, *b
 	if err != nil {
 		return nil, nil, fmt.Errorf("dial websocket: %w", err)
 	}
+
+	// Closing the raw connection unblocks the TLS and HTTP upgrade I/O below.
+	rawConn := conn
+	stopWatch := context.AfterFunc(ctx, func() { _ = rawConn.Close() })
+	defer stopWatch()
 
 	if parsedURL.Scheme == "wss" {
 		tlsConn := tls.Client(conn, &tls.Config{ServerName: parsedURL.Hostname(), MinVersion: tls.VersionTLS12})
@@ -110,6 +127,12 @@ func dialWebSocket(ctx context.Context, rawURL string, lim limits) (net.Conn, *b
 	if got, want := response.Header.Get("Sec-WebSocket-Accept"), acceptKey(nonce); got != want {
 		_ = conn.Close()
 		return nil, nil, fmt.Errorf("websocket handshake failed: invalid accept key")
+	}
+
+	if !stopWatch() {
+		// ctx ended after the upgrade finished but before we stopped watching.
+		_ = conn.Close()
+		return nil, nil, fmt.Errorf("websocket handshake: %w", ctx.Err())
 	}
 
 	if hasDeadline {

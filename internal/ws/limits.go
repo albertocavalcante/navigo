@@ -34,6 +34,8 @@ var (
 	ErrTooManyControlFrames = errors.New("websocket peer sent too many consecutive control frames")
 	// ErrProtocol reports a violation of RFC 6455 by the peer.
 	ErrProtocol = errors.New("websocket protocol violation")
+	// ErrClosed reports a write after a close frame was sent.
+	ErrClosed = errors.New("websocket connection is closing")
 	// ErrHandshakeTooLarge reports an oversized upgrade response head.
 	ErrHandshakeTooLarge = errors.New("websocket handshake response exceeds size limit")
 )
