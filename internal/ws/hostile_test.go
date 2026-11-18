@@ -45,7 +45,19 @@ func rawFrame(b0, b1flags byte, payload []byte) []byte {
 }
 
 // declaredLength builds a header declaring length bytes with only body behind.
+// Minimal length encoding; forced64 always uses the 64-bit form.
 func declaredLength(opcode byte, length uint64, body []byte) []byte {
+	switch {
+	case length <= 125:
+		return append([]byte{finalBit | opcode, byte(length)}, body...)
+	case length <= 0xFFFF:
+		return append([]byte{finalBit | opcode, 126, byte(length >> 8), byte(length)}, body...)
+	}
+
+	return forced64(opcode, length, body)
+}
+
+func forced64(opcode byte, length uint64, body []byte) []byte {
 	out := []byte{finalBit | opcode, 127}
 	out = binary.BigEndian.AppendUint64(out, length)
 
@@ -88,6 +100,9 @@ func TestReadMessageRefusals(t *testing.T) {
 		{"declared length over cap, short body", declaredLength(opcodeText, 1<<40, []byte("abc")), ErrMessageTooLarge},
 		{"declared length just over cap", declaredLength(opcodeText, 1025, bytes.Repeat([]byte("a"), 1025)), ErrMessageTooLarge},
 		{"length with top bit set", declaredLength(opcodeText, 1<<63, nil), ErrProtocol},
+		{"126 marker carrying 5", []byte{finalBit | opcodeText, 126, 0, 5, 'a', 'b', 'c', 'd', 'e'}, ErrProtocol},
+		{"127 marker carrying 0xFFFF", forced64(opcodeText, 0xFFFF, nil), ErrProtocol},
+		{"127 marker carrying 125", forced64(opcodeText, 125, nil), ErrProtocol},
 		{"max uint64 length", declaredLength(opcodeText, ^uint64(0), nil), ErrProtocol},
 		{"size exceeded across fragments", cat(
 			serverFrame(false, opcodeText, bytes.Repeat([]byte("a"), 600)),

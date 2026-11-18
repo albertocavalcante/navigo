@@ -174,7 +174,12 @@ func readPayloadLength(r io.Reader, marker byte) (uint64, error) {
 			return 0, fmt.Errorf("read websocket extended length: %w", err)
 		}
 
-		return uint64(binary.BigEndian.Uint16(ext[:])), nil
+		length := uint64(binary.BigEndian.Uint16(ext[:]))
+		if length < 126 {
+			return 0, protocolError("non-minimal 16-bit payload length %d", length)
+		}
+
+		return length, nil
 	case 127:
 		var ext [8]byte
 		if _, err := io.ReadFull(r, ext[:]); err != nil {
@@ -184,6 +189,10 @@ func readPayloadLength(r io.Reader, marker byte) (uint64, error) {
 		length := binary.BigEndian.Uint64(ext[:])
 		if length>>63 != 0 {
 			return 0, protocolError("payload length has the most significant bit set")
+		}
+
+		if length <= 0xFFFF {
+			return 0, protocolError("non-minimal 64-bit payload length %d", length)
 		}
 
 		return length, nil
