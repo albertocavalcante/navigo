@@ -1,3 +1,7 @@
+# golangci-lint's default cache is shared by every checkout and can report
+# findings for another checkout's paths; keep one cache per checkout.
+export GOLANGCI_LINT_CACHE := env("GOLANGCI_LINT_CACHE", justfile_directory() / ".cache" / "golangci-lint")
+
 default:
     @just --list --unsorted
 
