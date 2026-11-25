@@ -20,6 +20,9 @@ type Browser struct {
 	done    chan error
 	waitMu  sync.Mutex
 	waited  bool
+
+	downloadsMu sync.Mutex
+	downloads   *downloadTracker
 }
 
 // ConnectOption customizes [Connect]. With no options, Connect applies the
