@@ -25,6 +25,8 @@ func TestSignInDetectorURL(t *testing.T) {
 		"https://example.test/session-timeout",
 		"https://example.test/logoff",
 		"https://example.test/logon",
+		"https://example.test/%6Cogin",
+		"https://example.test/lo%67in;x=1",
 		"https://example.test/login.aspx",
 		"https://example.test/login;jsessionid=1",
 		"https://example.test/a/Login.jsp;x=y/b",
@@ -38,6 +40,8 @@ func TestSignInDetectorURL(t *testing.T) {
 		"https://example.test/docs#/login",
 		"https://example.test/blog/ssourcing",
 		"https://example.test/login-history.aspx",
+		"https://example.test/%6Cogin-history",
+		"https://example.test/a%3Blogin",
 		"not a url \x7f",
 	}
 	for _, u := range signIn {

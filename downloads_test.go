@@ -54,6 +54,23 @@ func sendProgress(transport *fakeTransport, guid, state string, received, total 
 	transport.reads <- []byte(`{"method":"Browser.downloadProgress","params":{"guid":"` + guid + `","state":"` + state + `","receivedBytes":` + strconv.Itoa(received) + `,"totalBytes":` + strconv.Itoa(total) + `}}`)
 }
 
+// waitTracked blocks until the event goroutine has recorded guid in state.
+func waitTracked(t *testing.T, browser *Browser, guid string, state cdpbrowser.DownloadProgressState) {
+	t.Helper()
+
+	tracker := browser.currentDownloads()
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		tracker.mu.Lock()
+		it, ok := tracker.items[guid]
+		match := ok && it.state == state
+		tracker.mu.Unlock()
+		if match {
+			return
+		}
+	}
+	t.Fatalf("download %q never reached state %q", guid, state)
+}
+
 func TestEnableDownloadsSendsAllowAndName(t *testing.T) {
 	t.Parallel()
 
@@ -283,6 +300,7 @@ func TestSanitizeDownloadName(t *testing.T) {
 		{"console.txt", "console.txt"},
 		{"a\u202eb\u2066c.txt", "abc.txt"},
 		{"a\u0085b\u009fc.txt", "abc.txt"},
+		{"a\u200eb\u200fc\u061cd.txt", "abcd.txt"},
 	}
 	for _, tt := range tests {
 		if got := sanitizeDownloadName(tt.in); got != tt.want {
@@ -358,6 +376,7 @@ func TestWaitForDownloadGUIDAndDiscard(t *testing.T) {
 	sendBegin(transport, "g2", "two.bin")
 	sendProgress(transport, "g1", "completed", 2, 2)
 	sendProgress(transport, "g2", "completed", 2, 2)
+	waitTracked(t, browser, "g2", cdpbrowser.DownloadProgressStateCompleted)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -436,5 +455,59 @@ func TestExceptionText(t *testing.T) {
 	}
 	if got := exceptionText(&cdpruntime.ExceptionDetails{Text: "Uncaught"}); got != "Uncaught" {
 		t.Fatalf("exceptionText = %q", got)
+	}
+}
+
+func TestIdleErrorIsTypedAndDiscardable(t *testing.T) {
+	t.Parallel()
+
+	browser, transport := newFakeBrowser(t)
+	enableDownloadsFake(t, browser, transport, t.TempDir())
+	sendBegin(transport, "g7", "slow.bin")
+	sendProgress(transport, "g7", "inProgress", 1, 10)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := browser.WaitForDownload(ctx, DownloadOptions{IdleTimeout: 50 * time.Millisecond})
+	var idle *DownloadIdleError
+	if !errors.Is(err, ErrDownloadIdle) || !errors.As(err, &idle) {
+		t.Fatalf("err = %v, want *DownloadIdleError", err)
+	}
+	if idle.GUID != "g7" || idle.Name != "slow.bin" {
+		t.Fatalf("idle = %+v", idle)
+	}
+	if err := browser.DiscardDownload(idle.GUID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWaitForDownloadGUIDUnknownOrReturned(t *testing.T) {
+	t.Parallel()
+
+	browser, transport := newFakeBrowser(t)
+	dir := t.TempDir()
+	enableDownloadsFake(t, browser, transport, dir)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	if _, err := browser.WaitForDownloadGUID(ctx, "nope", DownloadOptions{}); !errors.Is(err, ErrUnknownDownload) {
+		t.Fatalf("unknown: err = %v, want ErrUnknownDownload", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("unknown GUID did not fail promptly")
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "g8"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sendBegin(transport, "g8", "a.bin")
+	sendProgress(transport, "g8", "completed", 1, 1)
+	waitTracked(t, browser, "g8", cdpbrowser.DownloadProgressStateCompleted)
+	if _, err := browser.WaitForDownloadGUID(ctx, "g8", DownloadOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := browser.WaitForDownloadGUID(ctx, "g8", DownloadOptions{}); !errors.Is(err, ErrUnknownDownload) {
+		t.Fatalf("returned: err = %v, want ErrUnknownDownload", err)
 	}
 }

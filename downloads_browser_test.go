@@ -60,7 +60,8 @@ func TestDownloadWithLocalChrome(t *testing.T) {
 		t.Fatalf("Goto() error = %v", err)
 	}
 	// Poll in-page until the link exists, then click it. (DOM node-id based
-	// selector waits are avoided: they raced the document load on CI.)
+	// selector waits are avoided: they raced the document load on CI, see
+	// https://github.com/albertocavalcante/navigo/issues/5.)
 	clicked := false
 	for deadline := time.Now().Add(15 * time.Second); !clicked && time.Now().Before(deadline); {
 		v, err := page.Evaluate(ctx, `(() => { const a = document.getElementById("dl"); if (!a) return false; a.click(); return true; })()`)

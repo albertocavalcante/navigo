@@ -28,6 +28,11 @@ var (
 	// DownloadOptions.IdleTimeout. The download is not consumed: a later
 	// WaitForDownload call can still pick it up.
 	ErrDownloadIdle = errors.New("download idle")
+	// ErrUnknownDownload is returned by WaitForDownloadGUID and DiscardDownload
+	// for a GUID the browser never reported or that was already returned or
+	// discarded. Events are processed asynchronously, so call it after the
+	// download was triggered.
+	ErrUnknownDownload = errors.New("unknown download")
 	// ErrDownloadIncomplete reports a download the browser called completed
 	// whose file is missing, partial or not a regular file. Such a file is
 	// never returned as a success.
@@ -66,6 +71,25 @@ type Download struct {
 	// SHA256 is the lowercase hex digest; empty unless requested.
 	SHA256 string
 }
+
+// DownloadIdleError identifies the stalled download behind ErrDownloadIdle so
+// the caller can pass GUID to [Browser.DiscardDownload].
+type DownloadIdleError struct {
+	GUID string
+	Name string
+	Idle time.Duration
+}
+
+func (e *DownloadIdleError) Error() string {
+	name := e.Name
+	if name == "" {
+		name = e.GUID
+	}
+
+	return fmt.Sprintf("download %q (%s): no progress for %s: %s", name, e.GUID, e.Idle, ErrDownloadIdle)
+}
+
+func (e *DownloadIdleError) Unwrap() error { return ErrDownloadIdle }
 
 type downloadItem struct {
 	guid, url, name string
@@ -228,7 +252,7 @@ func (b *Browser) DiscardDownload(guid string) error {
 	item, ok := tracker.items[guid]
 	if !ok {
 		tracker.mu.Unlock()
-		return fmt.Errorf("discard download %q: unknown download", guid)
+		return fmt.Errorf("discard download %q: %w", guid, ErrUnknownDownload)
 	}
 	item.consumed = true
 	dir := item.dir
@@ -265,23 +289,28 @@ func (b *Browser) waitForDownload(ctx context.Context, guid string, opts Downloa
 		tracker.mu.Lock()
 		var ready *downloadItem
 		var lastActivity time.Time
-		var pending bool
-		var pendingName string
+		var pending, found bool
+		var pendingName, pendingGUID string
 		for _, g := range tracker.order {
 			it := tracker.items[g]
 			if it.consumed || (guid != "" && g != guid) {
 				continue
 			}
+			found = true
 			if isTerminal(it.state) {
 				ready = it
 				break
 			}
 			pending = true
 			if it.last.After(lastActivity) {
-				lastActivity, pendingName = it.last, it.name
+				lastActivity, pendingName, pendingGUID = it.last, it.name, it.guid
 			}
 		}
 		changed, closed := tracker.changed, tracker.closed
+		if guid != "" && !found {
+			tracker.mu.Unlock()
+			return Download{}, fmt.Errorf("wait for download %q: %w", guid, ErrUnknownDownload)
+		}
 		var snapshot downloadItem
 		if ready != nil {
 			snapshot = *ready
@@ -311,10 +340,7 @@ func (b *Browser) waitForDownload(ctx context.Context, guid string, opts Downloa
 		if pending && opts.IdleTimeout > 0 {
 			remaining := opts.IdleTimeout - time.Since(lastActivity)
 			if remaining <= 0 {
-				if pendingName == "" {
-					pendingName = "download"
-				}
-				return Download{}, fmt.Errorf("wait for download %q: no progress for %s: %w", pendingName, opts.IdleTimeout, ErrDownloadIdle)
+				return Download{}, fmt.Errorf("wait for download: %w", &DownloadIdleError{GUID: pendingGUID, Name: pendingName, Idle: opts.IdleTimeout})
 			}
 			timer = time.NewTimer(remaining)
 			idle = timer.C
@@ -452,6 +478,7 @@ func sanitizeDownloadName(name string) string {
 	name = strings.Map(func(r rune) rune {
 		switch {
 		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || r == utf8.RuneError,
+			r == 0x200e || r == 0x200f || r == 0x061c,
 			r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
 			return -1
 		case strings.ContainsRune(`<>:"|?*`, r):

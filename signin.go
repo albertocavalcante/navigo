@@ -136,6 +136,9 @@ func (d *SignInDetector) MatchURL(rawURL string) bool {
 	// Use the raw path: ";params" must be cut before escapes are decoded.
 	for _, seg := range strings.Split(u.EscapedPath(), "/") {
 		seg, _, _ = strings.Cut(seg, ";")
+		if unescaped, err := url.PathUnescape(seg); err == nil {
+			seg = unescaped
+		}
 		seg = strings.ToLower(seg)
 		if _, ok := d.segments[seg]; ok {
 			return true
