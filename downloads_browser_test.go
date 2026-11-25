@@ -59,11 +59,21 @@ func TestDownloadWithLocalChrome(t *testing.T) {
 	if _, err := page.Goto(ctx, srv.URL+"/"); err != nil {
 		t.Fatalf("Goto() error = %v", err)
 	}
-	if _, err := page.WaitForSelector(ctx, "#dl"); err != nil {
-		t.Fatalf("WaitForSelector() error = %v", err)
+	// Poll in-page until the link exists, then click it. (DOM node-id based
+	// selector waits are avoided: they raced the document load on CI.)
+	clicked := false
+	for deadline := time.Now().Add(15 * time.Second); !clicked && time.Now().Before(deadline); {
+		v, err := page.Evaluate(ctx, `(() => { const a = document.getElementById("dl"); if (!a) return false; a.click(); return true; })()`)
+		if err != nil {
+			t.Fatalf("click error = %v", err)
+		}
+		clicked, _ = v.(bool)
+		if !clicked {
+			time.Sleep(100 * time.Millisecond)
+		}
 	}
-	if _, err := page.Evaluate(ctx, `document.getElementById("dl").click()`); err != nil {
-		t.Fatalf("click error = %v", err)
+	if !clicked {
+		t.Fatal("download link never appeared")
 	}
 
 	got, err := browser.WaitForDownload(ctx, DownloadOptions{ComputeSHA256: true, IdleTimeout: 20 * time.Second})
