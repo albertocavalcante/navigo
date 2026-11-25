@@ -72,6 +72,7 @@ type downloadItem struct {
 	state           cdpbrowser.DownloadProgressState
 	received, total float64
 	filePath        string
+	dir             string
 	last            time.Time
 	consumed        bool
 }
@@ -99,12 +100,18 @@ func (t *downloadTracker) run(events <-chan cdp.Event) {
 				continue
 			}
 			t.mu.Lock()
-			if _, ok := t.items[begin.GUID]; !ok {
+			if item, ok := t.items[begin.GUID]; ok {
+				// A repeated begin never resurrects or resets a known download;
+				// it only fills in details a progress-first event lacked.
+				if item.name == "" {
+					item.name, item.url = begin.SuggestedFilename, begin.URL
+				}
+			} else {
 				t.order = append(t.order, begin.GUID)
-			}
-			t.items[begin.GUID] = &downloadItem{
-				guid: begin.GUID, url: begin.URL, name: begin.SuggestedFilename,
-				state: cdpbrowser.DownloadProgressStateInProgress, last: time.Now(),
+				t.items[begin.GUID] = &downloadItem{
+					guid: begin.GUID, url: begin.URL, name: begin.SuggestedFilename,
+					state: cdpbrowser.DownloadProgressStateInProgress, dir: t.dir, last: time.Now(),
+				}
 			}
 			t.notifyLocked()
 			t.mu.Unlock()
@@ -116,7 +123,7 @@ func (t *downloadTracker) run(events <-chan cdp.Event) {
 			t.mu.Lock()
 			item, ok := t.items[progress.GUID]
 			if !ok { // progress without a begin event: track it anyway
-				item = &downloadItem{guid: progress.GUID}
+				item = &downloadItem{guid: progress.GUID, dir: t.dir}
 				t.items[progress.GUID] = item
 				t.order = append(t.order, progress.GUID)
 			}
@@ -158,20 +165,25 @@ func (b *Browser) EnableDownloads(ctx context.Context, dir string) error {
 	defer b.downloadsMu.Unlock()
 
 	root := b.conn.RootSession()
-	var events <-chan cdp.Event
+	var (
+		events <-chan cdp.Event
+		cancel func()
+	)
 	if b.downloads == nil {
-		var cancel func()
 		events, cancel = root.Subscribe(downloadEventBuffer)
-		_ = cancel // lives until the connection closes the subscriber channel
 	}
 
 	call := cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorParamsBehaviorAllowAndName).
 		WithDownloadPath(abs).WithEventsEnabled(true)
 	if err := call.Do(ctx, root); err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		return fmt.Errorf("enable downloads: %w", err)
 	}
 
 	if b.downloads == nil {
+		// The subscription ends when the connection closes its channel.
 		b.downloads = &downloadTracker{dir: abs, items: map[string]*downloadItem{}, changed: make(chan struct{})}
 		go b.downloads.run(events)
 	} else {
@@ -183,44 +195,110 @@ func (b *Browser) EnableDownloads(ctx context.Context, dir string) error {
 	return nil
 }
 
-// WaitForDownload waits for the oldest download not yet returned, including
-// one that started before the call. It returns only after the browser reports
-// completion and the file is verified, then renames it atomically to a
-// sanitised, collision-free name. ctx bounds the whole wait.
+// WaitForDownload waits for the first download, in start order, that has
+// completed or been canceled and was not returned before, including one that
+// finished before the call. A stalled earlier download never blocks a ready
+// later one. It returns only after the browser reports completion and the file
+// is verified, then renames it atomically to a sanitised, collision-free name.
+// ctx bounds the whole wait; IdleTimeout applies only while nothing is ready.
 func (b *Browser) WaitForDownload(ctx context.Context, opts DownloadOptions) (Download, error) {
+	return b.waitForDownload(ctx, "", opts)
+}
+
+// WaitForDownloadGUID is like WaitForDownload for one specific download.
+func (b *Browser) WaitForDownloadGUID(ctx context.Context, guid string, opts DownloadOptions) (Download, error) {
+	if guid == "" {
+		return Download{}, errors.New("wait for download: empty GUID")
+	}
+
+	return b.waitForDownload(ctx, guid, opts)
+}
+
+// DiscardDownload stops tracking a download (for example one that stalled and
+// was reported as idle) so later waits skip it, and removes its GUID-named
+// file if present. The browser may still be writing it; use a fresh directory
+// via EnableDownloads if that matters.
+func (b *Browser) DiscardDownload(guid string) error {
+	tracker := b.currentDownloads()
+	if tracker == nil {
+		return fmt.Errorf("discard download: %w", ErrDownloadsNotEnabled)
+	}
+
+	tracker.mu.Lock()
+	item, ok := tracker.items[guid]
+	if !ok {
+		tracker.mu.Unlock()
+		return fmt.Errorf("discard download %q: unknown download", guid)
+	}
+	item.consumed = true
+	dir := item.dir
+	tracker.notifyLocked()
+	tracker.mu.Unlock()
+
+	if dir != "" && guid == filepath.Base(guid) && guid != "." && guid != ".." {
+		if err := os.Remove(filepath.Join(dir, guid)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("discard download %q: %w", guid, err)
+		}
+	}
+
+	return nil
+}
+
+func (b *Browser) currentDownloads() *downloadTracker {
 	b.downloadsMu.Lock()
-	tracker := b.downloads
-	b.downloadsMu.Unlock()
+	defer b.downloadsMu.Unlock()
+
+	return b.downloads
+}
+
+func isTerminal(state cdpbrowser.DownloadProgressState) bool {
+	return state == cdpbrowser.DownloadProgressStateCompleted || state == cdpbrowser.DownloadProgressStateCanceled
+}
+
+func (b *Browser) waitForDownload(ctx context.Context, guid string, opts DownloadOptions) (Download, error) {
+	tracker := b.currentDownloads()
 	if tracker == nil {
 		return Download{}, fmt.Errorf("wait for download: %w", ErrDownloadsNotEnabled)
 	}
 
 	for {
 		tracker.mu.Lock()
-		var item *downloadItem
-		for _, guid := range tracker.order {
-			if it := tracker.items[guid]; !it.consumed {
-				item = it
+		var ready *downloadItem
+		var lastActivity time.Time
+		var pending bool
+		var pendingName string
+		for _, g := range tracker.order {
+			it := tracker.items[g]
+			if it.consumed || (guid != "" && g != guid) {
+				continue
+			}
+			if isTerminal(it.state) {
+				ready = it
 				break
 			}
-		}
-		changed, closed, dir := tracker.changed, tracker.closed, tracker.dir
-		var snapshot downloadItem
-		if item != nil {
-			snapshot = *item
-			if snapshot.state == cdpbrowser.DownloadProgressStateCompleted || snapshot.state == cdpbrowser.DownloadProgressStateCanceled {
-				item.consumed = true
+			pending = true
+			if it.last.After(lastActivity) {
+				lastActivity, pendingName = it.last, it.name
 			}
+		}
+		changed, closed := tracker.changed, tracker.closed
+		var snapshot downloadItem
+		if ready != nil {
+			snapshot = *ready
+			ready.consumed = true
 		}
 		tracker.mu.Unlock()
 
-		if item != nil {
-			switch snapshot.state {
-			case cdpbrowser.DownloadProgressStateCompleted:
-				return finalizeDownload(snapshot, dir, opts)
-			case cdpbrowser.DownloadProgressStateCanceled:
-				return Download{}, fmt.Errorf("wait for download %q: %w", snapshot.name, ErrDownloadCanceled)
+		if ready != nil {
+			label := snapshot.name
+			if label == "" {
+				label = snapshot.guid
 			}
+			if snapshot.state == cdpbrowser.DownloadProgressStateCanceled {
+				return Download{}, fmt.Errorf("wait for download %q: %w", label, ErrDownloadCanceled)
+			}
+
+			return finalizeDownload(snapshot, opts)
 		}
 		if closed {
 			return Download{}, errors.New("wait for download: browser connection closed")
@@ -230,10 +308,13 @@ func (b *Browser) WaitForDownload(ctx context.Context, opts DownloadOptions) (Do
 			idle  <-chan time.Time
 			timer *time.Timer
 		)
-		if item != nil && opts.IdleTimeout > 0 {
-			remaining := opts.IdleTimeout - time.Since(snapshot.last)
+		if pending && opts.IdleTimeout > 0 {
+			remaining := opts.IdleTimeout - time.Since(lastActivity)
 			if remaining <= 0 {
-				return Download{}, fmt.Errorf("wait for download %q: no progress for %s: %w", snapshot.name, opts.IdleTimeout, ErrDownloadIdle)
+				if pendingName == "" {
+					pendingName = "download"
+				}
+				return Download{}, fmt.Errorf("wait for download %q: no progress for %s: %w", pendingName, opts.IdleTimeout, ErrDownloadIdle)
 			}
 			timer = time.NewTimer(remaining)
 			idle = timer.C
@@ -254,15 +335,28 @@ func (b *Browser) WaitForDownload(ctx context.Context, opts DownloadOptions) (Do
 	}
 }
 
-func finalizeDownload(item downloadItem, dir string, opts DownloadOptions) (Download, error) {
+func finalizeDownload(item downloadItem, opts DownloadOptions) (Download, error) {
 	incomplete := func(format string, args ...any) (Download, error) {
-		return Download{}, fmt.Errorf("finish download %q: %s: %w", item.name, fmt.Sprintf(format, args...), ErrDownloadIncomplete)
+		label := item.name
+		if label == "" {
+			label = item.guid
+		}
+
+		return Download{}, fmt.Errorf("finish download %q: %s: %w", label, fmt.Sprintf(format, args...), ErrDownloadIncomplete)
+	}
+	dir := item.dir
+	if dir == "" {
+		return incomplete("download directory unknown")
 	}
 
 	if item.guid == "" || item.guid != filepath.Base(item.guid) || item.guid == "." || item.guid == ".." {
 		return incomplete("unsafe download identifier")
 	}
 	guidPath := filepath.Join(dir, item.guid)
+	// Prefer the browser-reported path when it is exactly where we expect.
+	if item.filePath != "" && filepath.Clean(item.filePath) == guidPath {
+		guidPath = item.filePath
+	}
 	if strings.HasSuffix(guidPath, ".crdownload") {
 		return incomplete("temporary file")
 	}
@@ -285,14 +379,14 @@ func finalizeDownload(item downloadItem, dir string, opts DownloadOptions) (Down
 	if opts.ComputeSHA256 {
 		sum, err := hashFile(guidPath)
 		if err != nil {
-			return Download{}, fmt.Errorf("finish download %q: hash: %w", item.name, err)
+			return Download{}, fmt.Errorf("finish download %q: hash: %w", item.guid, err)
 		}
 		result.SHA256 = sum
 	}
 
 	final, err := moveToUniqueName(guidPath, dir, sanitizeDownloadName(item.name))
 	if err != nil {
-		return Download{}, fmt.Errorf("finish download %q: %w", item.name, err)
+		return Download{}, fmt.Errorf("finish download %q: %w", item.guid, err)
 	}
 	result.Path = final
 
@@ -319,6 +413,9 @@ func hashFile(path string) (string, error) {
 // each other or an existing file.
 func moveToUniqueName(src, dir, name string) (string, error) {
 	ext := filepath.Ext(name)
+	if strings.EqualFold(filepath.Ext(strings.TrimSuffix(name, ext)), ".tar") {
+		ext = name[len(name)-len(ext)-len(".tar"):]
+	}
 	stem := strings.TrimSuffix(name, ext)
 	candidate := name
 	for i := 1; i <= maxCollisionTries; i++ {
@@ -353,8 +450,12 @@ func sanitizeDownloadName(name string) string {
 		name = name[i+1:]
 	}
 	name = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f || r == utf8.RuneError {
+		switch {
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || r == utf8.RuneError,
+			r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
 			return -1
+		case strings.ContainsRune(`<>:"|?*`, r):
+			return '_'
 		}
 		return r
 	}, name)
@@ -362,6 +463,9 @@ func sanitizeDownloadName(name string) string {
 	name = strings.TrimRight(name, ". ")
 	if name == "" {
 		return "download"
+	}
+	if isWindowsReservedName(name) {
+		name = "_" + name
 	}
 
 	if len(name) > maxDownloadNameBytes {
@@ -378,4 +482,18 @@ func sanitizeDownloadName(name string) string {
 	}
 
 	return name
+}
+
+// isWindowsReservedName reports whether the part before the first dot is a
+// reserved device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9), with any extension.
+func isWindowsReservedName(name string) bool {
+	base, _, _ := strings.Cut(name, ".")
+	switch strings.ToUpper(strings.TrimSpace(base)) {
+	case "CON", "PRN", "AUX", "NUL",
+		"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		return true
+	}
+
+	return false
 }

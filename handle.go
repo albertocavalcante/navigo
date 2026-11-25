@@ -112,7 +112,7 @@ func (h *Handle) callFunction(ctx context.Context, functionDeclaration string, w
 	}
 
 	if result.ExceptionDetails != nil {
-		return nil, fmt.Errorf("call handle function: %s", result.ExceptionDetails.Text)
+		return nil, fmt.Errorf("call handle function: %s", exceptionText(result.ExceptionDetails))
 	}
 
 	if wantHandle {

@@ -59,6 +59,9 @@ func TestDownloadWithLocalChrome(t *testing.T) {
 	if _, err := page.Goto(ctx, srv.URL+"/"); err != nil {
 		t.Fatalf("Goto() error = %v", err)
 	}
+	if _, err := page.WaitForSelector(ctx, "#dl"); err != nil {
+		t.Fatalf("WaitForSelector() error = %v", err)
+	}
 	if _, err := page.Evaluate(ctx, `document.getElementById("dl").click()`); err != nil {
 		t.Fatalf("click error = %v", err)
 	}

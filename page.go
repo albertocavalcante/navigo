@@ -283,7 +283,7 @@ func (p *Page) Evaluate(ctx context.Context, expression string) (any, error) {
 	}
 
 	if result.ExceptionDetails != nil {
-		return nil, fmt.Errorf("evaluate page expression: %s", result.ExceptionDetails.Text)
+		return nil, fmt.Errorf("evaluate page expression: %s", exceptionText(result.ExceptionDetails))
 	}
 
 	return decodeRemoteValue(result.Result)
@@ -296,7 +296,7 @@ func (p *Page) EvaluateHandle(ctx context.Context, expression string) (*Handle, 
 	}
 
 	if result.ExceptionDetails != nil {
-		return nil, fmt.Errorf("evaluate page expression: %s", result.ExceptionDetails.Text)
+		return nil, fmt.Errorf("evaluate page expression: %s", exceptionText(result.ExceptionDetails))
 	}
 
 	return newHandle(p, result.Result, "evaluate page expression")
@@ -328,7 +328,7 @@ func (p *Page) CallFunction(ctx context.Context, functionDeclaration string, arg
 	}
 
 	if result.ExceptionDetails != nil {
-		return nil, fmt.Errorf("call page function: %s", result.ExceptionDetails.Text)
+		return nil, fmt.Errorf("call page function: %s", exceptionText(result.ExceptionDetails))
 	}
 
 	return decodeRemoteValue(result.Result)
@@ -359,7 +359,7 @@ func (p *Page) CallFunctionHandle(ctx context.Context, functionDeclaration strin
 	}
 
 	if result.ExceptionDetails != nil {
-		return nil, fmt.Errorf("call page function: %s", result.ExceptionDetails.Text)
+		return nil, fmt.Errorf("call page function: %s", exceptionText(result.ExceptionDetails))
 	}
 
 	return newHandle(p, result.Result, "call page function")
@@ -1093,4 +1093,14 @@ func decodeRemoteValue(object cdpruntime.RemoteObject) (any, error) {
 
 		return value, nil
 	}
+}
+
+// exceptionText renders a JavaScript exception with its description (message
+// and stack head) when the browser provides one.
+func exceptionText(details *cdpruntime.ExceptionDetails) string {
+	if details.Exception != nil && details.Exception.Description != "" {
+		return details.Text + ": " + details.Exception.Description
+	}
+
+	return details.Text
 }

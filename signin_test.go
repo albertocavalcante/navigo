@@ -3,6 +3,7 @@ package navigo
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 func TestSignInDetectorURL(t *testing.T) {
 	t.Parallel()
 
-	d := NewSignInDetector()
+	d := MustNewSignInDetector()
 	signIn := []string{
 		"https://example.test/login",
 		"https://example.test/Login/",
@@ -23,6 +24,10 @@ func TestSignInDetectorURL(t *testing.T) {
 		"https://example.test/a/sso/redirect",
 		"https://example.test/session-timeout",
 		"https://example.test/logoff",
+		"https://example.test/logon",
+		"https://example.test/login.aspx",
+		"https://example.test/login;jsessionid=1",
+		"https://example.test/a/Login.jsp;x=y/b",
 	}
 	other := []string{
 		"https://example.test/",
@@ -32,6 +37,7 @@ func TestSignInDetectorURL(t *testing.T) {
 		"https://example.test/docs?next=/login",
 		"https://example.test/docs#/login",
 		"https://example.test/blog/ssourcing",
+		"https://example.test/login-history.aspx",
 		"not a url \x7f",
 	}
 	for _, u := range signIn {
@@ -49,11 +55,14 @@ func TestSignInDetectorURL(t *testing.T) {
 func TestSignInDetectorCustom(t *testing.T) {
 	t.Parallel()
 
-	d := NewSignInDetector(
+	d, err := NewSignInDetector(
 		WithSignInPathSegments("entrar"),
 		WithSignInHosts("idp.example.test"),
 		WithSignInTitlePatterns(`(?i)^please sign in`),
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !d.MatchURL("https://example.test/entrar") {
 		t.Error("custom segment should match")
 	}
@@ -69,7 +78,7 @@ func TestSignInDetectorCustom(t *testing.T) {
 	if d.Classify("https://example.test/", "Dashboard") != nil {
 		t.Error("Classify should be nil")
 	}
-	err := d.Classify("https://example.test/entrar", "x")
+	err = d.Classify("https://example.test/entrar", "x")
 	var sie *SignInRequiredError
 	if !errors.Is(err, ErrSignInRequired) || !errors.As(err, &sie) || sie.URL == "" {
 		t.Fatalf("err = %v", err)
@@ -79,9 +88,23 @@ func TestSignInDetectorCustom(t *testing.T) {
 func TestSignInDetectorBadTitlePattern(t *testing.T) {
 	t.Parallel()
 
-	d := NewSignInDetector(WithSignInTitlePatterns(`(`))
-	if d.MatchTitle("anything") {
-		t.Error("invalid pattern must be ignored")
+	if _, err := NewSignInDetector(WithSignInTitlePatterns(`(`)); err == nil {
+		t.Fatal("invalid pattern: want error")
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("MustNewSignInDetector should panic on invalid pattern")
+		}
+	}()
+	MustNewSignInDetector(WithSignInTitlePatterns(`(`))
+}
+
+func TestSignInDetectorHostTrailingDot(t *testing.T) {
+	t.Parallel()
+
+	d := MustNewSignInDetector(WithSignInHosts("idp.example.test."))
+	if !d.MatchURL("https://IDP.example.test./x") || !d.MatchURL("https://idp.example.test/x") {
+		t.Error("trailing dot should be ignored on both sides")
 	}
 }
 
@@ -116,15 +139,88 @@ func TestPageOnNavigationAndGuard(t *testing.T) {
 		t.Fatal("no navigation event")
 	}
 
-	ctx, cancelGuard := page.GuardSignIn(context.Background(), NewSignInDetector())
-	defer cancelGuard()
+	evalReply := func(id int, value string) {
+		t.Helper()
+		select {
+		case <-transport.sends:
+			transport.reads <- []byte(`{"id":` + strconv.Itoa(id) + `,"sessionId":"s1","result":{"result":{"type":"string","value":"` + value + `"}}}`)
+		case <-time.After(time.Second):
+			t.Fatal("no evaluate request")
+		}
+	}
+
+	type guardResult struct {
+		ctx    context.Context
+		cancel context.CancelFunc
+		err    error
+	}
+	resCh := make(chan guardResult, 1)
+	go func() {
+		c, cn, err := page.GuardSignIn(context.Background(), MustNewSignInDetector())
+		resCh <- guardResult{c, cn, err}
+	}()
+	evalReply(1, "https://example.test/home")
+	evalReply(2, "Home")
+	res := <-resCh
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	defer res.cancel()
 	transport.reads <- frameNavigatedEvent("m", "", "https://example.test/sso/start")
 	select {
-	case <-ctx.Done():
-		if !errors.Is(context.Cause(ctx), ErrSignInRequired) {
-			t.Fatalf("cause = %v", context.Cause(ctx))
+	case <-res.ctx.Done():
+		if !errors.Is(context.Cause(res.ctx), ErrSignInRequired) {
+			t.Fatalf("cause = %v", context.Cause(res.ctx))
 		}
 	case <-time.After(time.Second):
 		t.Fatal("guard context not canceled")
+	}
+}
+
+func TestGuardSignInAlreadyOnSignInPage(t *testing.T) {
+	t.Parallel()
+
+	transport := newFakeTransport()
+	conn := cdp.NewConn(transport)
+	go func() { _ = conn.Run(context.Background()) }()
+	page := &Page{session: conn.Session("s1")}
+
+	type guardResult struct {
+		ctx    context.Context
+		cancel context.CancelFunc
+		err    error
+	}
+	resCh := make(chan guardResult, 1)
+	go func() {
+		c, cn, err := page.GuardSignIn(context.Background(), MustNewSignInDetector())
+		resCh <- guardResult{c, cn, err}
+	}()
+	for id, v := range []string{"https://example.test/login", "Sign in"} {
+		select {
+		case <-transport.sends:
+			transport.reads <- []byte(`{"id":` + strconv.Itoa(id+1) + `,"sessionId":"s1","result":{"result":{"type":"string","value":"` + v + `"}}}`)
+		case <-time.After(time.Second):
+			t.Fatal("no evaluate request")
+		}
+	}
+	res := <-resCh
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	defer res.cancel()
+	if !errors.Is(context.Cause(res.ctx), ErrSignInRequired) {
+		t.Fatalf("cause = %v, want ErrSignInRequired", context.Cause(res.ctx))
+	}
+}
+
+func TestGuardSignInNilDetector(t *testing.T) {
+	t.Parallel()
+
+	page := &Page{}
+	if _, _, err := page.GuardSignIn(context.Background(), nil); err == nil {
+		t.Fatal("nil detector: want error")
+	}
+	if err := page.CheckSignIn(context.Background(), nil); err == nil {
+		t.Fatal("nil detector: want error from CheckSignIn")
 	}
 }

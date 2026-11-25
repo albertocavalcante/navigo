@@ -28,7 +28,9 @@ sensitive headers; the high-level `NetworkEvent` observer continues to omit head
 Enable downloads once, trigger one, then wait. The browser writes GUID-named
 files; `WaitForDownload` returns only after the browser reports completion and
 the file checks out, then renames it atomically to a sanitised, collision-free
-name. Canceled or partial downloads are errors, never successes.
+name. Canceled or partial downloads are errors, never successes. A stalled
+download does not block a finished one; use `WaitForDownloadGUID` to target one
+and `DiscardDownload` to drop one that stalled.
 
 ```go
 dir := "/path/to/downloads" // must exist
@@ -54,18 +56,21 @@ fmt.Println(dl.Path, dl.Size, dl.SHA256)
 ## Sign-in detection
 
 `SignInDetector` classifies a URL (or title) as a sign-in page using whole path
-segments, so `/login` matches but `/login-history` does not. Defaults are
-`login`, `signin`, `sign-in`, `signon`, `auth`, `sso`, `session-timeout`,
-`logoff`; override them, add identity-provider hosts or title patterns:
+segments, so `/login`, `/login.aspx` and `/login;jsessionid=1` match but
+`/login-history` does not (`/docs/auth` does match; narrow the list if needed). Defaults are
+`login`, `logon`, `signin`, `sign-in`, `signon`, `auth`, `sso`,
+`session-timeout`, `logoff`; override them, add identity-provider hosts or title patterns:
 
 ```go
-detector := navigo.NewSignInDetector(
+detector, err := navigo.NewSignInDetector(
 	navigo.WithSignInHosts("idp.example.com"),
 	navigo.WithSignInTitlePatterns(`(?i)^please sign in`),
 )
+if err != nil { /* invalid title pattern */ }
 
 // Cancel waits as soon as the page lands on a sign-in page.
-guarded, release := page.GuardSignIn(ctx, detector)
+guarded, release, err := page.GuardSignIn(ctx, detector) // also checks the current page
+if err != nil { /* ... */ }
 defer release()
 _, err := page.WaitForSelector(guarded, "#report")
 if errors.Is(context.Cause(guarded), navigo.ErrSignInRequired) {
